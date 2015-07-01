@@ -50,8 +50,6 @@ class BlockShuffleSplit(object):
             self.block_indices = block_indices
             self.block_list = np.unique(block_indices)
             n = block_indices.shape[0]
-        if self.block_indices.shape[0] != self.n:
-            raise AssertionError('Unequal n and block_indices')
 
         self.n = n
         self.n_iter = n_iter
@@ -61,6 +59,8 @@ class BlockShuffleSplit(object):
         self.random_stats = random_state
         self.indices = np.arange(n)
         self.n_blocks = len(np.unique(self.block_indices))
+        if self.block_indices.shape[0] != self.n:
+            raise AssertionError('Unequal n and block_indices')
         print('Using {0} blocks'.format(self.n_blocks))
 
     def __len__(self):
