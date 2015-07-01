@@ -83,3 +83,42 @@ def delay_timeseries(ts, sfreq, delays):
         delayed.append(rolled)
     delayed = np.vstack(delayed)
     return delayed
+
+
+def find_sound_times(snd, sfreq, win_size):
+    """Find groups of sound times by clustering in time.
+
+    Parameters
+    ----------
+    snd : array (type bool)
+        A boolean array of sound timepoints, often
+        created with a cutoff
+    sfreq : int
+        The sampling frequency of snd
+    win_size : float
+        The size of the search window in seconds
+
+    Returns
+    -------
+    sounds : array, shape(n_sounds, 2)
+        start and stop times for each sound, in seconds.
+    """
+    on = False
+    win = int(sfreq * win_size)
+    sounds = []
+    for i, b in enumerate(over):
+        if on == False:
+            if b == True:
+                on = True
+                start = i
+        if on is True:
+            if b == True:
+                continue
+            elif any(over[i: i+win]):
+                continue
+            else:
+                on = False
+                stop = i
+                sounds.append([start, stop])
+    sounds = np.array(sounds)
+    return sounds / float(sfreq)
