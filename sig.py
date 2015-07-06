@@ -106,7 +106,7 @@ def find_sound_times(snd, sfreq, win_size):
     on = False
     win = int(sfreq * win_size)
     sounds = []
-    for i, b in enumerate(over):
+    for i, b in enumerate(snd):
         if on == False:
             if b == True:
                 on = True
@@ -114,11 +114,12 @@ def find_sound_times(snd, sfreq, win_size):
         if on is True:
             if b == True:
                 continue
-            elif any(over[i: i+win]):
+            elif any(snd[i: i+win]):
+                # If there sound in the near future, keep going
                 continue
             else:
                 on = False
                 stop = i
                 sounds.append([start, stop])
-    sounds = np.array(sounds)
-    return sounds / float(sfreq)
+    sounds = np.array(sounds).astype(float) / sfreq
+    return sounds
