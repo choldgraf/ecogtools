@@ -33,7 +33,7 @@ def split_color_axis(ax, cutoff=0, cols=['g', 'r']):
 
 
 def add_rotated_axis(f, extents=(-1, 1, 0, 1), sc_x=None, sc_y=None,
-                     rotation=-45, position=(.5, .5), invisible_border=True):
+                     rotation=45, position=(.5, .5), invisible_border=True):
     """Add a rotated axis to an existing figure.
 
     Parameters
@@ -63,10 +63,11 @@ def add_rotated_axis(f, extents=(-1, 1, 0, 1), sc_x=None, sc_y=None,
         aren't possible with the regular axis.
     """
     af = Affine2D()
-    transform = af.scale(sc_x, sc_y).rotate_deg(-45)
+    transform = af.scale(sc_x, sc_y).rotate_deg(rotation)
     helper = floating_axes.GridHelperCurveLinear(transform, extents)
     ax = floating_axes.FloatingSubplot(f, 111, grid_helper=helper)
     ax_aux = ax.get_aux_axes(transform)
+    ax.invert_xaxis()
     f.add_subplot(ax)
     ax.set_position(np.hstack([position, .5, .5]))
 
