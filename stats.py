@@ -2,8 +2,12 @@
 
 import numpy as np
 from scipy import stats, linalg
+from statsmodels.distributions.empirical_distribution import ECDF
 
-__all__ = ['partial_corr']
+
+__all__ = ['partial_corr',
+           'permutation_diff_between']
+
 
 def partial_corr(C):
     """
@@ -63,3 +67,41 @@ def partial_corr(C):
             P_corr[j, i] = corr
 
     return P_corr
+
+
+def permutation_diff_between(arr_diff, n_perm=1000, return_distribution=False):
+    '''Performs a permutation test for an array of differences.
+
+    This randomly flips the differences in arr_diff n_perm times to build a
+    null distribution of mean differences. Then, it compares the empirical
+    mean difference to this distribution.
+
+    Parameters
+    ----------
+    arr_diff : array
+        Point-by-point difference between two arrays (e.g.,
+        from a repeated measures design).
+    n_perm : int
+        The number of permutations to run.
+    return_distribution : bool
+        Whether to return the simulated null distribution
+
+    Returns
+    -------
+    p_val : float
+        The empirical p-value on the simulated null distribution
+    diff_perm : array (optional)
+        The simulated null distribution
+    '''
+    precision = len(str(int(n_perm)))
+    diff_perm = []
+    for _ in range(int(n_perm)):
+        perm_flips = np.random.choice([-1, 1], arr_diff.shape[0])
+        perm_mean = (arr_diff * perm_flips).mean()
+        diff_perm.append(perm_mean)
+    ecdf = ECDF(diff_perm)
+    p_val = 1 - ecdf(arr_diff.mean())
+    if return_distribution:
+        return p_val, diff_perm
+    else:
+        return p_val
