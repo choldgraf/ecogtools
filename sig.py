@@ -1,8 +1,8 @@
 import numpy as np
-from sklearn.preprocessing import scale
+from sklearn.preprocessing import StandardScaler
 
 
-def car(signal, grouping=None, exclude_elecs=None,
+def car(signal, grouping=None, exclude_elecs=None, agg_func=np.mean,
         normalize=False, return_averages=False):
     """Compute the common average reference of a signal.
 
@@ -12,6 +12,15 @@ def car(signal, grouping=None, exclude_elecs=None,
             the signal to be re-referenced,
         grouping : vector, n_features long
             a group identity vector that is n_features long
+        exclude_elecs : array-like
+            Any electrode indices to exclude from the common signal
+        agg_func : function that takes a vector and returns a scalar
+            The function to aggregate across channels
+        normalize : bool
+            Normalize all channels before computing the average?
+        return_averages : bool
+            If True, this will return the aggregated signal from each
+            group on top of the rereferenced signal.
 
     Returns
     -------
@@ -31,8 +40,10 @@ def car(signal, grouping=None, exclude_elecs=None,
                              'length as n_features'])
 
     signal_car = signal.copy()
-    if normalize:
-        signal_car = scale(signal_car, axis=0)
+    if normalize is True:
+        print('Normalizing signals before CAR')
+        scl = StandardScaler()
+        signal_car = scl.fit_transform(signal_car)
 
     groups = np.unique(grouping[grouping > 0])
     print('Number of groups found: {0}'.format(len(groups)))
@@ -47,9 +58,13 @@ def car(signal, grouping=None, exclude_elecs=None,
             mask_good = mask
 
         # Compute the CAR and subtract
-        commonsignal = signal_car[:, mask_good].mean(axis=1)
+        commonsignal = agg_func(signal_car[:, mask_good], axis=1)
         signal_car[:, mask] -= commonsignal[:, None]
         common_signals[:, i] = commonsignal
+
+    if normalize is True:
+        # Return normalized signals to original mean/std
+        signal_car = scl.inverse_transform(signal_car)
     if return_averages:
         return signal_car, common_signals
     else:

@@ -14,11 +14,12 @@ def test_car():
     # Make sure electrode exclusion is correct
     exclude_elecs = np.zeros_like(groups).astype(bool)
     exclude_elecs[[0, 4]] = 1
-    out, com = car(data, grouping=groups, exclude_elecs=exclude_elecs,
-                   return_averages=True)
-    for ix in [0, 4]:
-        assert_almost_equal(out[:, ix]+com[:, groups[ix]-1],
-                            data[:, ix])
+    for func in [np.mean, np.median]:
+        out, com = car(data, grouping=groups, exclude_elecs=exclude_elecs,
+                       return_averages=True, agg_func=func)
+        for ix in [0, 4]:
+            assert_almost_equal(out[:, ix]+com[:, groups[ix]-1],
+                                data[:, ix])
 
 
 def test_delay_timeseries():
