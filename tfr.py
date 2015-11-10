@@ -4,9 +4,11 @@ import pandas as pd
 import numpy as np
 import sys
 from mne.time_frequency import write_tfrs, compute_epochs_psd
+from mne.utils import ProgressBar
 from scipy.signal import decimate
+import h5io
 
-__all__ = ['EpochTFR']
+__all__ = ['EpochTFR', 'tfr_epochs']
 
 
 class EpochTFR(object):
@@ -63,18 +65,18 @@ class EpochTFR(object):
         self.times = times
         self.info = info
         self.method = method
-        
+
     @property
     def ch_names(self):
         return self.info['ch_names']
-        
+
     def write_hdf(self, fname, **kwargs):
         """
         Write the object to an HDF file.
-        
+
         This bottles up all object attributes into a dictionary,
         and sends it to an HDF file via the h5py library.
-        
+
         Parameters
         ----------
         fname : str
@@ -86,7 +88,7 @@ class EpochTFR(object):
         write_dict = {'data': self.data, 'freqs': self.freqs,
                       'events': self.events, 'times': self.times,
                       'info': self.info, 'event_id': self.event_id}
-        mne._hdf5.write_hdf5(fname, write_dict, **kwargs)
+        h5io.write_hdf5(fname, write_dict, **kwargs)
         
     def subset_freq(self, fmin, fmax):
         """
@@ -106,7 +108,7 @@ class EpochTFR(object):
         epoch_info['description'] = "{'kind': 'TFRFreqSubset', 'freqs': '{0}-{1}'.format(fmin, fmax)}"
         return mne.EpochsArray(data_freq, epoch_info, self.events,
                                  tmin=self.times.min(), event_id=self.event_id)
-    
+
     def subset_epoch(self, epoch_ixs):
         """
         Return the mean of a subset of epochs.
@@ -115,22 +117,22 @@ class EpochTFR(object):
         ----------
         epoch_ixs : list, ndarray
             The epoch indices to keep
-        
+
         Returns
         ----------
         obj : AverageTFR
             Instance of AverageTFR with epochs averaged.
         """
-        
+
         data_epoch = self.data[epoch_ixs, ...].squeeze().mean(0)
         epoch_info = self.info.copy()
         return mne.time_frequency.AverageTFR(epoch_info, data_epoch, self.times,
                                              self.freqs, len(epoch_ixs), comment='TFREpochSubset',
                                              method=self.method)
-        
+
     def crop(self, tmin=None, tmax=None, copy=False):
         """Crop data to a given time interval
-        
+
         Parameters
         ----------
         tmin : float | None
@@ -191,6 +193,53 @@ class EpochTFR(object):
         etfr : EpochsTFR
             The EpochsTFR object contained in the HDF5 file.
         """
-        params = mne._hdf5.read_hdf5(fname)
+        params = h5io.read_hdf5(fname)
         etfr = EpochTFR(**params)
         return etfr
+
+
+def tfr_epochs(epoch, freqs_tfr, n_decim=10, n_cycles=4):
+    """Extract a TFR representation from epochs w/o averaging.
+
+    This will extract the TFR for the given frequencies, returning
+    an EpochsTFR object with data shape (n_epochs, n_chans, n_freqs, n _times).
+    TFR is performed with a morlet wavelet.
+
+    Parameters
+    ----------
+    epoch : mne.Epochs instance
+        The epochs for which to extract the TFR
+    freqs_tfr : array-like
+        The frequencies to extract w/ wavelets
+    n_decim : int
+        The factor to decimate the time-dimension. 1=no decimation
+    n_cycles : int
+        The number of cycles for the wavelets
+    """
+    # Preallocate space
+    new_times = epoch.times[::n_decim]
+    new_info = epoch.info.copy()
+    new_info['sfreq'] /= n_decim
+    new_epoch = epoch.copy()
+    n_epoch = len(new_epoch)
+    out_shape = (n_epoch, len(epoch.ch_names),
+                 freqs_tfr.shape[0], len(new_times))
+    tfr = np.zeros(out_shape, dtype=np.float32)
+    print('Preallocating space\nshape: {0}\nmbytes:{1}'.format(
+        out_shape, tfr.nbytes/1000000))
+
+    # Do TFR decomp
+    print('Extracting TFR information...')
+    pbar = ProgressBar(n_epoch)
+    for i in range(n_epoch):
+        iepoch = new_epoch[i]
+        idata = iepoch._data.squeeze()
+        itfr = mne.time_frequency.cwt_morlet(idata, iepoch.info['sfreq'],
+                                             freqs_tfr, n_cycles=n_cycles)
+        itfr = itfr[:, :, ::n_decim]
+        tfr[i] = np.abs(itfr)
+        pbar.update_with_increment_value(1)
+
+    etfr = EpochTFR(tfr, freqs_tfr, new_times, new_epoch.events,
+                    new_epoch.event_id, new_info)
+    return etfr
