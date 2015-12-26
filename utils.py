@@ -2,6 +2,7 @@
 
 from IPython import embed
 import numpy as np
+import mne
 
 
 def apply_across_df_level(df, levels, func=np.mean):
@@ -60,3 +61,32 @@ def query_from_dicts(dict_list):
     if len(queries) == 1:
         queries = queries[0]
     return queries
+
+
+# ----- MNE ------
+def create_random_events(nev, ntimes, nclasses):
+    """Creates a random set of nev events for each of 
+    nclasses, randomly interspersed in ntimes."""
+    ixs = np.random.permutation(range(ntimes))
+    classes = np.tile(range(nclasses), (nev, 1)).ravel()
+    ixs_ev = ixs[:nev*nclasses]
+    events = np.zeros([nev*nclasses, 3])
+    for i, (ix, evclass) in enumerate(zip(ixs_ev, classes)):
+        events[i, :] = [ix, 0, evclass]
+    return events.astype(int)
+
+
+def create_random_epochs(nep, nchan, ntime, sfreq,
+                         nclasses=2, ch_types='eeg'):
+    data = np.random.randn(nep*nclasses, nchan, ntime*sfreq)
+    ev = create_random_events(nep, ntime*sfreq, nclasses)
+    info = mne.create_info([str(i) for i in range(nchan)], sfreq, ch_types)
+    ep = mne.epochs.EpochsArray(data, info, ev)
+    return ep
+
+
+def create_random_raw(nchan, ntime, sfreq, ch_types='eeg'):
+    data = np.random.randn(nchan, ntime*sfreq)
+    info = mne.create_info([str(i) for i in range(nchan)], sfreq, ch_types)
+    raw = mne.io.RawArray(data, info)
+    return raw
