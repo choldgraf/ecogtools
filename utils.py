@@ -3,6 +3,25 @@
 from IPython import embed
 import numpy as np
 import mne
+import sys
+from os import path, sep, remove
+from glob import glob
+from datetime import datetime
+
+
+def ipy_post_mortem():
+    """Causes ipython/idb to be called in the event of an error"""
+    from IPython.core import ultratb
+    sys.excepthook = ultratb.FormattedTB(
+        mode='Verbose', color_scheme='Linux', call_pdb=1)
+
+
+def add_ix_to_dataframe(df, ix_dict):
+    df = df.copy()
+    for nm, ix in ix_dict.iteritems():
+        df[nm] = ix
+        df = df.set_index(nm, append=True)
+    return df
 
 
 def apply_across_df_level(df, levels, func=np.mean):
@@ -34,7 +53,7 @@ def apply_across_df_level(df, levels, func=np.mean):
 
 
 def query_from_dicts(dict_list):
-    '''
+    """
     Create a series of string queries from a dictionary.
 
     This allows you to create a query to be used with pandas .query or .eval
@@ -45,7 +64,7 @@ def query_from_dicts(dict_list):
     dict_list : list of dict
         The dictionaries to use to build queries. Queries will be constructed
         using key
-    '''
+    """
     if not isinstance(dict_list, (list, np.ndarray)):
         dict_list = [dict_list]
     qu_list = []
@@ -63,30 +82,49 @@ def query_from_dicts(dict_list):
     return queries
 
 
-# ----- MNE ------
-def create_random_events(nev, ntimes, nclasses):
-    """Creates a random set of nev events for each of 
-    nclasses, randomly interspersed in ntimes."""
-    ixs = np.random.permutation(range(ntimes))
-    classes = np.tile(range(nclasses), (nev, 1)).ravel()
-    ixs_ev = ixs[:nev*nclasses]
-    events = np.zeros([nev*nclasses, 3])
-    for i, (ix, evclass) in enumerate(zip(ixs_ev, classes)):
-        events[i, :] = [ix, 0, evclass]
-    return events.astype(int)
+def bin_and_apply(data, bin_centers, func=np.mean):
+    """Aggregate data by bin centers and apply a function to combine
+
+    This will find the nearest bin_center for each value in data,
+    group them together by the closest bin, and apply func to the
+    values.
+
+    Parameters
+    ----------
+    data : np.array, shape(n_points,)
+        The 1-d data you'll be binning
+    bin_centers : np.array, shape(n_bins)
+        The centers you compare to each data point
+    func : function, returns scalar from 1-d data
+        Data within each bin group will be combined
+        using this function.
+
+    Returns
+    -------
+    new_vals : np.array, shape(n_bins)
+        The data combined according to bins you supplied."""
+    ix_bin = np.digitize(data, bin_centers)
+    new_vals = []
+    for ibin in np.unique(ix_bin):
+        igroup = data[ix_bin == ibin]
+        new_vals.append(func(igroup))
+    new_vals = np.array(new_vals)
+    return(new_vals)
 
 
-def create_random_epochs(nep, nchan, ntime, sfreq,
-                         nclasses=2, ch_types='eeg'):
-    data = np.random.randn(nep*nclasses, nchan, ntime*sfreq)
-    ev = create_random_events(nep, ntime*sfreq, nclasses)
-    info = mne.create_info([str(i) for i in range(nchan)], sfreq, ch_types)
-    ep = mne.epochs.EpochsArray(data, info, ev)
-    return ep
-
-
-def create_random_raw(nchan, ntime, sfreq, ch_types='eeg'):
-    data = np.random.randn(nchan, ntime*sfreq)
-    info = mne.create_info([str(i) for i in range(nchan)], sfreq, ch_types)
-    raw = mne.io.RawArray(data, info)
-    return raw
+def add_timestamp_to_folder(save_path, append=None, overwrite=True):
+    """Add a timestamp to a save folder."""
+    dir_name = path.dirname(save_path)
+    today = datetime.today()
+    time_stamp = '_'.join([str(i) for i in [today.date(),
+                                            'h{}'.format(today.hour),
+                                            'm{}'.format(today.minute)]])
+    if append is not None:
+        if overwrite is True:
+            to_remove = glob(dir_name + '/*{0}.stamp'.format(append))
+            for over_file in to_remove:
+                print('Removing file: {0}'.format(over_file))
+                remove(over_file)
+        time_stamp = time_stamp + '__' + append + '.stamp'
+    file_stamp = path.dirname(save_path) + '/{0}'.format(time_stamp)
+    open(file_stamp, 'a').close()

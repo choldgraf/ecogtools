@@ -3,12 +3,12 @@ from glob import glob
 import pandas as pd
 import numpy as np
 import sys
-from mne.time_frequency import write_tfrs, compute_epochs_psd
+from mne.time_frequency import compute_epochs_psd
 from mne.utils import ProgressBar
 from scipy.signal import decimate
 import h5io
 
-__all__ = ['EpochTFR', 'tfr_epochs']
+__all__ = ['EpochTFR', 'tfr_epochs', 'extract_amplitude']
 
 
 class EpochTFR(object):
@@ -243,3 +243,69 @@ def tfr_epochs(epoch, freqs_tfr, n_decim=10, n_cycles=4):
     etfr = EpochTFR(tfr, freqs_tfr, new_times, new_epoch.events,
                     new_epoch.event_id, new_info)
     return etfr
+
+
+def extract_amplitude(inst, freqs, fwidth, normalize=False, new_len=None,
+                      picks=None, copy=True, n_jobs=1, ):
+    """Extract the time-varying amplitude for a frequency band.
+
+    If multiple freqs are given, the amplitude is calculated at each frequency
+    and then averaged across frequencies.
+
+    Parameters
+    ----------
+    inst : instance of Raw
+        The data to have amplitude extracted
+    freqs : array of ints/floats | int/float
+        The frequencies to use. If multiple frequencies are given, amplitude
+        will be extracted at each and then averaged between frequencies.
+    fwidth : array of ints/floats | int/float
+        The width of window to use for bandpassing the signal before amplitude
+        is extracted. If multiple widths are provided, there must be one per
+        frequency.
+    normalize : bool
+        Whether to normalize each frequency amplitude by its mean before
+        averaging. This can be helpful if some frequencies have a much higher
+        base amplitude than others.
+    new_len : int | None
+        The length of data to use in the Hilbert transform. The data will be
+        cut to last dimension of this size.
+    picks : array | None
+        The channels to use for extraction
+
+    Returns
+    -------
+    inst : mne instance, same type as input 'inst'
+        The MNE instance with channels replaced with their time-varying
+        amplitude for the supplied frequency range.
+    """
+
+    # Data checks
+    new_len = inst.n_times if new_len is None else new_len
+    freqs, fwin = [np.atleast_1d(i) for i in [freqs, fwidth]]
+    picks = range(len(inst.ch_names)) if picks is None else picks
+    if len(fwidth) == 1:
+        fwidth = np.repeat(np.squeeze(fwidth), len(freqs))
+    elif len(fwidth) != len(freqs):
+        raise ValueError('fwidth must be the same shape as freqs')
+
+    # Filter for HG and extract amplitude
+    bands = np.zeros([len(freqs), len(inst.ch_names), inst.n_times])
+    for i, (freq, fwin) in enumerate(zip(freqs, fwidth)):
+        # Extract a range of frequency bands for averaging later
+        inst_band = inst.copy()
+        inst_band.filter(freq-fwin/2, freq+fwin/2, n_jobs=n_jobs)
+        inst_band.apply_hilbert(picks, envelope=True,
+                                n_jobs=n_jobs, n_fft=new_len)
+
+        if normalize is True:
+            # Scale frequency band so that the ratios of all are the same
+            inst_band_mn = inst_band._data.mean(1)[:, np.newaxis]
+            inst_band._data /= inst_band_mn
+        bands[i] = inst_band._data.copy()
+
+    # Average across fbands
+    if copy is True:
+        inst = inst.copy()
+    inst._data[picks, :] = bands.mean(0)
+    return inst

@@ -5,3 +5,4 @@ from .cross_validation import *
 from .stats import *
 from .viz import *
 from .strf import *
+from .utils import *
