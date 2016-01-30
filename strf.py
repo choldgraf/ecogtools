@@ -1,16 +1,46 @@
 from __future__ import division
 import numpy as np
 from scipy.linalg import svd
-from .sig import delay_timeseries
 from sklearn.preprocessing import scale
-from sklearn.cross_validation import KFold, LabelShuffleSplit
+from sklearn.cross_validation import KFold, LabelShuffleSplit, LeavePLabelOut
 from sklearn.linear_model import Ridge
 from sklearn.grid_search import GridSearchCV
+from mne.utils import _time_mask
 from .utils import embed
+from copy import deepcopy
 
 __all__ = ['svd_clean',
            'mps',
            'fit_strf']
+
+
+def delay_timeseries(ts, sfreq, delays):
+    """Include time-lags for a timeseries.
+
+    Parameters
+    ----------
+    ts: array, shape(n_feats, n_times)
+        The timeseries to delay
+    sfreq: int
+        The sampling frequency of the series
+    delays: list of floats
+        The time (in seconds) of each delay
+    Returns
+    -------
+    delayed: array, shape(n_feats*n_delays, n_times)
+        The delayed matrix
+    """
+    delayed = []
+    for delay in delays:
+        roll_amount = int(delay * sfreq)
+        rolled = np.roll(ts, roll_amount, axis=1)
+        if delay < 0:
+            rolled[:, roll_amount:0] = 0
+        elif delay > 0:
+            rolled[:, 0:roll_amount] = 0
+        delayed.append(rolled)
+    delayed = np.vstack(delayed)
+    return delayed
 
 
 def _cluster_mask(msk):
@@ -42,9 +72,57 @@ def _scorer_corr(x, y):
     return np.corrcoef(x, y)[1, 0]
 
 
-def fit_strf(X, y, sfreq, delays, time_mask=None, alphas=1, cv_outer=None,
-             cv_inner=None, scorer_outer=_scorer_corr, X_names=None,
-             scale_data=True):
+def _check_time(X, time):
+    if isinstance(time, (int, float)):
+        time = np.repeat(time, X.shape[0])
+    elif time.shape[0] != X.shape[0]:
+        raise ValueError('time lims and X must have the same shape')
+    return time
+
+
+def _build_design_matrix(X, y, sfreq, times, delays, tmin, tmax):
+    if X.shape[-1] != y.shape[-1]:
+        raise ValueError('X and y have different time dimension')
+    if X.shape[0] != y.shape[0]:
+        raise ValueError('X and y have different number of epochs')
+    if tmin + np.min(delays) < np.min(times):
+        raise ValueError('Data will be cut off w delays, use longer epochs')
+    tmin = _check_time(X, tmin)
+    tmax = _check_time(X, tmax)
+
+    # Iterate through epochs with custom tmin/tmax if necessary
+    X_out, y_out, lab_out = [[] for _ in range(3)]
+    for i, (epX, epy, tmin, tmax) in enumerate(zip(X, y, tmin, tmax)):
+        msk_time = _time_mask(times, tmin, tmax)
+
+        epX_del = delay_timeseries(epX, sfreq, delays)
+        epX_out = epX_del[:, msk_time]
+        epy_out = epy[msk_time]
+        ep_lab = np.repeat(i + 1, epy_out.shape[-1])
+
+        X_out.append(epX_out)
+        y_out.append(epy_out)
+        lab_out.append(ep_lab)
+    return np.hstack(X_out), np.hstack(y_out), np.hstack(lab_out)
+
+
+def _check_cv(X, labels, cv):
+    cv = 5 if cv is None else cv
+    if isinstance(cv, float):
+        raise ValueError('cv must be an int or instance of sklearn cv')
+    if isinstance(cv, int):
+        if len(np.unique(labels)) == 1:
+            # Assume single continuous data, do KFold
+            cv = KFold(labels.shape[-1], cv)
+        else:
+            # Assume trials structure, do LabelShufleSplit
+            cv = LabelShuffleSplit(labels, n_iter=cv, test_size=.2)
+    return cv
+
+
+def fit_strf(X, y, sfreq, times, delays, tmin=None, tmax=None, est=None,
+             cv_outer=None, cv_inner=None, scorer_outer=None,
+             X_names=None, scale_data=True):
     """Fit a STRF model.
 
     This implementation uses Ridge regression and scikit-learn. It creates time
@@ -52,7 +130,7 @@ def fit_strf(X, y, sfreq, delays, time_mask=None, alphas=1, cv_outer=None,
 
     Parameters
     ----------
-    X : array, shape (n_feats, n_times)
+    X : array, shape (n_epochs, n_feats, n_times)
         The input data for the regression
     y : array, shape (n_times,)
         The output data for the regression
@@ -61,21 +139,27 @@ def fit_strf(X, y, sfreq, delays, time_mask=None, alphas=1, cv_outer=None,
     delays : array, shape (n_delays,)
         The delays to include when creating time lags. The input array X will
         end up having shape (n_feats * n_delays, n_times)
-    time_mask : array, shape (n_times,)
-        A mask for only using a subset of timepoints in X/y. Delays must be
-        made before a subset of time is taken, thus this allows you to fit a
-        model on a subset of time while keeping delays consistent.
-    alphas : float | array, shape (n_alphas)
-        The alpha values to choose in the Ridge regression. If len(alphas) > 1,
-        it corresponds to using an inner CV loop to choose alpha.
-    cv_outer : instance of (KFold, LabelShuffleSplit)
+    tmin : float | array, shape (n_epochs,)
+        The beginning time for each epoch. Optionally a different time for each
+        epoch may be provided.
+    tmax : float | array, shape (n_epochs,)
+        The end time for each epoch. Optionally a different time for each
+        epoch may be provided.
+    est : list (instance of sklearn, dict of params)
+        A list specifying the model and parameters to use. First item must be a
+        sklearn regression-style estimator. Second item is a
+        dictionary of kwargs to pass in the construction of that estimator. If
+        any values in kwargs is len > 1, then it is assumed that an inner CV
+        loop is required to select the best value using GridSearchCV.
+    cv_outer : int | instance of (KFold, LabelShuffleSplit)
         The cross validation object to use for the outer loop
-    cv_inner : instance of same type as cv_outer
+    cv_inner : int | instance of same type as cv_outer
         The cross validation object to use for the inner loop,
-        if len(alphas) > 1
-    scorer_outer : function
+        if hyperparameters are to be chosen computationally.
+    scorer_outer : function | None
         The scorer to use when evaluating on the held-out test set.
         It must accept two 1-d arrays as inputs, and output a scalar value.
+        If None, it will be correlation.
     X_names : list of strings/ints/floats, shape (n_feats,) : None
         A list of values corresponding to input features. Useful for keeping
         track of the coefficients in the model after time lagging.
@@ -85,91 +169,83 @@ def fit_strf(X, y, sfreq, delays, time_mask=None, alphas=1, cv_outer=None,
     Outputs
     -------
     ests : list of sklearn estimators, length (len(cv_outer),)
-        The estimator fit on each cv_outer loop. If len(alphas) > 1, then this
-        will be the chosen model using GridSearch on each loop.
-    scores: np.array, shape (len(cv_outer),)
+        The estimator fit on each cv_outer loop. If len(hyperparameters) > 1,
+        then this will be the chosen model using GridSearch on each loop.
+    scores: array, shape (len(cv_outer),)
         The scores on the held out test set on each loop of cv_outer
-    ch_names : list of strings, shape (n_feats * n_delays)
+    X_names : array of strings, shape (n_feats * n_delays)
         A list of names for each coefficient in the model. It is of structure
         'name_timedelay'.
     """
     # Checks
-    alphas = np.atleast_1d(alphas)
-    X_names = [str(i) for i in range(len(X))]if X_names is None else X_names
-    if len(X_names) != X.shape[0]:
+    if len(X_names) != X.shape[1]:
         raise ValueError('X_names and X.shape[0] must be the same size')
-    time_mask = np.ones_like(y, dtype=bool) if time_mask is None else time_mask
-    if time_mask.shape != y.shape:
-        raise ValueError('time_mask and y must be same shape')
-    if not X.shape[-1] == y.shape[-1] == time_mask.shape[-1]:
-        raise ValueError('X and y and time mask must be same shape')
+    scorer_outer = _scorer_corr if scorer_outer is None else scorer_outer
 
     # Delay X
-    X_delayed = delay_timeseries(X, sfreq, delays)
-
-    # Pull timepoints of interest with time_mask
-    if time_mask.dtype is not bool:
-        # Assume time mask has cluster indices
-        print('Shuffling along cluster indices...')
-        clust_ixs = time_mask.copy()
-        time_mask = time_mask > 0
-        clust_ixs = clust_ixs[time_mask]
-        cv_outer.__init__(clust_ixs, n_iter=cv_outer.n_iter,
-                          test_size=cv_outer.test_size)
-    X_delayed = X_delayed[..., time_mask]
-    y = y[..., time_mask]
+    X, y, labels = _build_design_matrix(X, y, sfreq, times, delays, tmin, tmax)
+    cv_outer = _check_cv(X, labels, cv_outer)
 
     if scale_data:
         # Scale features
         print('Scaling features...')
-        X_delayed = scale(X_delayed, axis=-1)
+        X = scale(X, axis=-1)
         y = scale(y, axis=-1)
 
+    X_names = [str(i) for i in range(len(X))]if X_names is None else X_names
     X_names = ['{0}_{1}'.format(feat, delay)
                for delay in delays for feat in X_names]
-    if y.shape != cv_outer.labels.shape:
-        raise AssertionError("y and cv_outer don't have the same shape") 
+
+    # Build model instance
+    est = [Ridge, dict(fit_intercept=False, alpha=1)] if est is None else est
+    mod, kws = est
+    hp_gridsearch = [isinstance(i, (list, tuple)) for i in kws.values()]
 
     # Fit the models
     ests, scores = [[] for _ in range(2)]
-
     for i, (tr, tt) in enumerate(cv_outer):
         print('\nCV: {0}'.format(i))
-        X_tr = X_delayed[:, tr].T
-        X_tt = X_delayed[:, tt].T
+        X_tr = X[:, tr].T
+        X_tt = X[:, tt].T
         y_tr = y[tr]
         y_tt = y[tt]
+        lab_tr = labels[tr]
+        lab_tt = labels[tt]
 
-        # Set up model and cross-validation
-        mod = Ridge(fit_intercept=False, alpha=alphas)
-        if len(alphas) > 1:
+        # Build the estimator
+        if any(hp_gridsearch):
+            # Have hyperparameters to loop through
             if not isinstance(cv_outer, type(cv_inner)):
                 raise ValueError('cv objects must be of same type')
             if isinstance(cv_outer, LabelShuffleSplit):
-                cv_inner.__init__(cv_outer.labels[tr],
-                                  n_iter=cv_inner.n_iter,
-                                  test_size=cv_inner.test_size)
+                cv_inner = LabelShuffleSplit(lab_tr, n_iter=5, test_size=.2)
             else:
                 # Assume kfold
-                n_folds = 5 if cv_inner is None else cv_inner.n_folds
                 cv_inner = KFold(len(y_tr), n_folds)
-            mod = GridSearchCV(mod, param_grid={'alpha': alphas}, cv=cv_inner)
+            kws_fit = dict(estimator=deepcopy(mod),
+                           param_grid=kws, cv=cv_inner)
+            mod_fit = GridSearchCV
+
+        else:
+            mod_fit = deepcopy(mod)
+            kws_fit = deepcopy(kws)
+        mod_fit = mod_fit(**kws_fit)
 
         # Fit model + make predictions
-        mod.fit(X_tr, y_tr)
-        pred = mod.predict(X_tt)
+        mod_fit.fit(X_tr, y_tr)
+        pred = mod_fit.predict(X_tt)
         scr = scorer_outer(pred, y_tt)
 
-        if len(alphas) > 1:
+        if any(hp_gridsearch):
             print('Alpha scores\n{}'.format(
-                '\n'.join([str(s) for s in mod.grid_scores_])))
-            mod = mod.best_estimator_
+                '\n'.join([str(s) for s in mod_fit.grid_scores_])))
+            mod_fit = mod_fit.best_estimator_
         else:
             print('Score: {0}'.format(scr))
 
         scores.append(scr)
-        ests.append(mod)
-    return ests, scores, np.array(X_names)
+        ests.append(mod_fit)
+    return ests, np.array(scores), np.array(X_names)
 
 
 def svd_clean(arr, svd_num=[0], kind='ix'):

@@ -4,11 +4,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.transforms import Affine2D
 import mpl_toolkits.axisartist.floating_axes as floating_axes
+from seaborn.palettes import diverging_palette
 
 __all__ = ['split_color_axis', 'add_rotated_axis', 'AnimatedScatter']
 
 
-def split_color_axis(ax, cutoff=0, cols=['g', 'r']):
+def split_color_axis(ax, cutoff=0, cols=['g', 'r'], clim=None, slim=None):
     '''Color axis data based on whether they're above/below a number.
 
     Takes an axis object coming from a call to scatter or hist.
@@ -24,12 +25,43 @@ def split_color_axis(ax, cutoff=0, cols=['g', 'r']):
                 patch.set_color(cols[0])
     elif len(ax.collections) > 0:
         # Scatterplot
-        xy = ax.collections[0].get_offsets()
+        axcol = ax.collections[0]
+        edgecol = axcol.get_edgecolors()
+        xy = axcol.get_offsets()
         diff = xy[:, 1] - xy[:, 0]
-        over = diff > cutoff
-        ax.collections[0].set_color(np.where(over, *cols))
+        if clim is not None:
+            if not all([isinstance(i, int) for i in cols]):
+                raise ValueError('Cols must be int if clim is given')
+            clim = np.max(np.abs(diff)) if clim is None else clim
+            pal = diverging_palette(*cols, as_cmap=True)
+            diff = diff - cutoff
+            # Normalize b/w -.5 and .5, then add .5 to be 0-1
+            diff = np.clip(diff, -clim, clim) / float(clim*2)
+            diff += .5
+            axcol.set_color(pal(diff))
+            if slim is not None:
+                smin, smax = slim
+                # Renorm size between -.5, .5, then double so its -1 to 1
+                sdiff = (np.abs(diff - .5) * 2)
+                # Now scale it to the right size / min amount
+                sizes = sdiff * (smax - smin) + smin
+                axcol.set_sizes(sizes)
+        else:
+            over = diff > cutoff
+            axcol.set_color(np.where(over, *cols))
+        axcol.set_edgecolors(edgecol)
     else:
         raise ValueError('Axis must have a scatterplot or histogram')
+    return ax
+
+
+def header_ax(s, x=.5, y=.5, fontsize=30, ax=None, **kwargs):
+    """Create a matplotlib plot as a header w/ text."""
+    if ax is None:
+        f, ax = plt.subplots()
+    ax.text(x, y, s, fontsize=fontsize, ha='center', va='center', **kwargs)
+    ax.axis('off')
+    return ax
 
 
 def add_rotated_axis(f, extents=(-1, 1, 0, 1), sc_x=None, sc_y=None,

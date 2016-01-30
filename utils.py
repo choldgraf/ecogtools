@@ -128,3 +128,18 @@ def add_timestamp_to_folder(save_path, append=None, overwrite=True):
         time_stamp = time_stamp + '__' + append + '.stamp'
     file_stamp = path.dirname(save_path) + '/{0}'.format(time_stamp)
     open(file_stamp, 'a').close()
+
+
+def decimate_by_binning(data, data_names, n_decim):
+    """Decimates along the first axis."""
+    data_names = np.array(data_names).astype(int)
+
+    # Calculate binning paramters
+    n_bins = int(data.shape[0] / n_decim)
+    bins = np.hstack([i]*n_decim for i in range(n_bins))
+
+    # Do the binning and take mean between them
+    data = np.vstack([data[bins == i].mean(0) for i in np.unique(bins)])
+    data_names = np.array([int(data_names[bins == i].mean())
+                           for i in np.unique(bins)])
+    return data, data_names

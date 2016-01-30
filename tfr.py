@@ -3,8 +3,6 @@ from glob import glob
 import pandas as pd
 import numpy as np
 import sys
-from mne.time_frequency import compute_epochs_psd
-from mne.utils import ProgressBar
 from scipy.signal import decimate
 import h5io
 
@@ -230,7 +228,6 @@ def tfr_epochs(epoch, freqs_tfr, n_decim=10, n_cycles=4):
 
     # Do TFR decomp
     print('Extracting TFR information...')
-    pbar = ProgressBar(n_epoch)
     for i in range(n_epoch):
         iepoch = new_epoch[i]
         idata = iepoch._data.squeeze()
@@ -238,7 +235,6 @@ def tfr_epochs(epoch, freqs_tfr, n_decim=10, n_cycles=4):
                                              freqs_tfr, n_cycles=n_cycles)
         itfr = itfr[:, :, ::n_decim]
         tfr[i] = np.abs(itfr)
-        pbar.update_with_increment_value(1)
 
     etfr = EpochTFR(tfr, freqs_tfr, new_times, new_epoch.events,
                     new_epoch.event_id, new_info)

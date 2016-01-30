@@ -138,3 +138,10 @@ def find_sound_times(snd, sfreq, win_size):
                 sounds.append([start, stop])
     sounds = np.array(sounds).astype(float) / sfreq
     return sounds
+
+
+def rms(arr):
+    """Calculate the Root Mean Squared power."""
+    arr = arr ** 2
+    rms = np.sqrt(np.mean(arr))
+    return rms

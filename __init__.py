@@ -6,3 +6,4 @@ from .stats import *
 from .viz import *
 from .strf import *
 from .utils import *
+from .mneutils import *
