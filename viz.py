@@ -5,54 +5,85 @@ import matplotlib.pyplot as plt
 from matplotlib.transforms import Affine2D
 import mpl_toolkits.axisartist.floating_axes as floating_axes
 from seaborn.palettes import diverging_palette
+from matplotlib.collections import PathCollection
+from matplotlib.patches import Rectangle
+from matplotlib.colors import LinearSegmentedColormap
 
-__all__ = ['split_color_axis', 'add_rotated_axis', 'AnimatedScatter']
+__all__ = ['split_plot_by_color', 'add_rotated_axis', 'AnimatedScatter']
 
 
-def split_color_axis(ax, cutoff=0, cols=['g', 'r'], clim=None, slim=None):
+def split_plot_by_color(obj, cutoff=0, cols=[15, 160], clim=None, slim=None):
     '''Color axis data based on whether they're above/below a number.
 
-    Takes an axis object coming from a call to scatter or hist.
-    Then, colors all bars lower than "cutoff" to red, and
-    others to green.
+    Parameters
+    ----------
+    obj : instance of PathCollection or Rectangle
+        The plot data to modify. This is the output of either a scatterplot
+        or a histogram
+    cutoff : float | int
+        The mid point for our color split
+    cols : list of ints, length 2
+        The colors at the limits of our color range. Should be in HUSL space.
+    clim : float
+        The width of the window (in data units) around cutoff. Data points
+        beyond this window will be saturated.
+    slim : list of ints, length 2 | None
+        If not None, it must be a list of integers, specifying the min/max
+        size of datapoints.
+
+    Returns
+    -------
+    obj : instance of input
+        The modified input object
     '''
-    if len(ax.patches) > 0:
+    # Define the color palette we'll use
+    if isinstance(cols, (list, tuple)):
+        pal = diverging_palette(*cols, as_cmap=True)
+    elif isinstance(cols, LinearSegmentedColormap):
+        pal = cols
+    else:
+        raise ValueError('Cols must be a list of ints, or colormap')
+
+    if isinstance(obj, list):
         # Histogram
-        for patch in ax.patches:
-            if np.round(patch.get_x(), 10) < cutoff:
-                patch.set_color(cols[1])
-            else:
-                patch.set_color(cols[0])
-    elif len(ax.collections) > 0:
+        if isinstance(obj[0], Rectangle):
+            for patch in obj:
+                if np.round(patch.get_x(), 10) < cutoff:
+                    patch.set_color(pal(float(0)))
+                else:
+                    patch.set_color(pal(float(1)))
+        else:
+            raise ValueError('List of unknown types provided')
+    elif isinstance(obj, PathCollection):
         # Scatterplot
-        axcol = ax.collections[0]
-        edgecol = axcol.get_edgecolors()
-        xy = axcol.get_offsets()
+        edgecol = obj.get_edgecolors()
+        xy = obj.get_offsets()
         diff = xy[:, 1] - xy[:, 0]
         if clim is not None:
             if not all([isinstance(i, int) for i in cols]):
                 raise ValueError('Cols must be int if clim is given')
             clim = np.max(np.abs(diff)) if clim is None else clim
-            pal = diverging_palette(*cols, as_cmap=True)
             diff = diff - cutoff
             # Normalize b/w -.5 and .5, then add .5 to be 0-1
             diff = np.clip(diff, -clim, clim) / float(clim*2)
             diff += .5
-            axcol.set_color(pal(diff))
+            obj.set_color(pal(diff))
             if slim is not None:
                 smin, smax = slim
                 # Renorm size between -.5, .5, then double so its -1 to 1
                 sdiff = (np.abs(diff - .5) * 2)
                 # Now scale it to the right size / min amount
                 sizes = sdiff * (smax - smin) + smin
-                axcol.set_sizes(sizes)
+                obj.set_sizes(sizes)
         else:
             over = diff > cutoff
-            axcol.set_color(np.where(over, *cols))
-        axcol.set_edgecolors(edgecol)
+            lowpal, highpal = [np.tile(pal(i), [len(over), 1]) for i in [0, 1]]
+            newcolors = np.where(over[:, None], pal(float(0)), pal(float(1)))
+            obj.set_color(newcolors)
+        obj.set_edgecolors(edgecol)
     else:
-        raise ValueError('Axis must have a scatterplot or histogram')
-    return ax
+        raise ValueError('Unknown type provided: {0}'.format(type(obj)))
+    return obj
 
 
 def header_ax(s, x=.5, y=.5, fontsize=30, ax=None, **kwargs):
