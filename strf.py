@@ -37,7 +37,7 @@ class EncodingModel(object):
         scorer : function | None
             The scorer to use when evaluating on the held-out test set.
             It must accept two 1-d arrays as inputs, and output a scalar value.
-            If None, it will be correlation.
+            If None, it will be mean squared error.
 
         Outputs
         -------
@@ -242,11 +242,11 @@ def _check_inputs(X, y, times, delays, tmin, tmax):
         raise ValueError('X, y, or times have different time dimension')
     if X.shape[0] != y.shape[0]:
         raise ValueError('X and y have different number of epochs')
-    if any([tmin + np.max(delays) < np.min(times),
-            tmax + np.min(delays) > np.max(times)]):
-        raise ValueError('Data will be cut off w delays, use longer epochs')
     tmin = _check_time(X, tmin)
     tmax = _check_time(X, tmax)
+    if any([np.min(tmin) + np.max(delays) < np.min(times),
+            np.max(tmax) + np.min(delays) > np.max(times)]):
+        raise ValueError('Data will be cut off w delays, use longer epochs')
     return X, y, tmin, tmax
 
 
