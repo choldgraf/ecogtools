@@ -48,6 +48,7 @@ class Events(object):
                 raise ValueError('metadata / time_start length mismatch')
             if np.sum(meta.isnull().values) > 0:
                 raise ValueError('Found NaNs in metadata')
+            meta = meta.reset_index(drop=True)
         self.meta = meta
         self.sfreq = sfreq
         self.ids = np.arange(len(time_start))
