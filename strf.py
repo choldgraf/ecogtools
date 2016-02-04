@@ -7,6 +7,7 @@ from sklearn.metrics import mean_squared_error
 from sklearn.pipeline import Pipeline
 from mne.utils import _time_mask
 from .utils import embed
+from tqdm import tqdm
 from copy import deepcopy
 
 __all__ = ['svd_clean',
@@ -48,7 +49,7 @@ class EncodingModel(object):
         self.scorer = mean_squared_error if scorer is None else scorer
 
     def fit(self, X, y, sfreq, times=None, tmin=None, tmax=None, cv=None,
-            cv_params=None, feat_names=None):
+            cv_params=None, feat_names=None, verbose=False):
         """Fit the model.
 
         Fits a receptive field model. Model results are stored as attributes.
@@ -75,6 +76,8 @@ class EncodingModel(object):
         feat_names : list of strings/ints/floats, shape (n_feats,) : None
             A list of values corresponding to input features. Useful for
             keeping track of the coefficients in the model after time lagging.
+        verbose : bool
+            If True, will display a progress bar during fits for CVs remaining.
 
         Attributes
         ----------
@@ -128,6 +131,8 @@ class EncodingModel(object):
             model_data.update(dict(best_estimators_=[], best_params_=[]))
 
         # Fit the model and collect model results
+        if verbose is True:
+            cv = tqdm(cv)
         for i, (tr, tt) in enumerate(cv):
             X_tr = X[:, tr].T
             X_tt = X[:, tt].T
