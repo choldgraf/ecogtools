@@ -1,6 +1,5 @@
 from __future__ import division
 import numpy as np
-from sklearn.preprocessing import scale
 from sklearn.cross_validation import KFold, LabelShuffleSplit, LeavePLabelOut
 from sklearn.linear_model import Ridge
 from sklearn.grid_search import GridSearchCV
@@ -20,35 +19,28 @@ class EncodingModel(object):
     def __init__(self, delays=None, est=None, scorer=None):
         """Fit a STRF model.
 
-        This implementation uses Ridge regression and scikit-learn. It creates time
-        lags for the input matrix, then does cross validation to fit a STRF model.
+        Fit a receptive field using time lags and a custom estimator or
+        pipeline. This implementation uses Ridge regression and scikit-learn.
+        It creates time lags for the input matrix, then does cross validation
+        to fit a STRF model.
 
         Parameters
         ----------
         delays : array, shape (n_delays,)
-            The delays to include when creating time lags. The input array X will
-            end up having shape (n_feats * n_delays, n_times)
-        est : list (instance of sklearn, dict of params)
-            A list specifying the model and parameters to use. First item must be a
-            sklearn regression-style estimator. Second item is a
-            dictionary of kwargs to pass in the construction of that estimator. If
-            any values in kwargs is len > 1, then it is assumed that an inner CV
-            loop is required to select the best value using GridSearchCV.
+            The delays to include when creating time lags. The input array X
+            will end up having shape (n_feats * n_delays, n_times)
+        est : list instance of sklearn estimator | pipeline with estimator
+            The estimator to use for fitting. This may be a pipeline, in which
+            case the final estimator must create a `coef_` attribute after
+            fitting. If an estimator is passed, it also must produce a `coef_`
+            attribute after fitting. If estimator is type `GridSearchCV`, then
+            a grid search will be performed on each CV iteration (using the cv
+            object stored in GridSearchCV). Extra attributes will be generated.
+            (see `fit` documentation)
         scorer : function | None
             The scorer to use when evaluating on the held-out test set.
             It must accept two 1-d arrays as inputs, and output a scalar value.
             If None, it will be mean squared error.
-
-        Outputs
-        -------
-        ests : list of sklearn estimators, length (len(cv_outer),)
-            The estimator fit on each cv_outer loop. If len(hyperparameters) > 1,
-            then this will be the chosen model using GridSearch on each loop.
-        scores: array, shape (len(cv_outer),)
-            The scores on the held out test set on each loop of cv_outer
-        X_names : array of strings, shape (n_feats * n_delays)
-            A list of names for each coefficient in the model. It is of structure
-            'name_timedelay'.
         """
         self.delays = np.array([0]) if delays is None else delays
         self.n_delays = len(self.delays)
@@ -58,6 +50,8 @@ class EncodingModel(object):
     def fit(self, X, y, sfreq, times=None, tmin=None, tmax=None, cv=None,
             cv_params=None, feat_names=None):
         """Fit the model.
+
+        Fits a receptive field model. Model results are stored as attributes.
 
         Parameters
         ----------
@@ -81,6 +75,24 @@ class EncodingModel(object):
         feat_names : list of strings/ints/floats, shape (n_feats,) : None
             A list of values corresponding to input features. Useful for
             keeping track of the coefficients in the model after time lagging.
+
+        Attributes
+        ----------
+        coef_ : array, shape (n_features * n_lags)
+            The average coefficients across CV splits
+        coefs_all_ : array, shape(n_cv, n_features * n_lags)
+            The raw coefficients for each iteration of cross-validation.
+        coef_names : array, shape (n_features * n_lags, 2)
+            A list of coefficient names, useful for keeping track of time lags
+        scores_ : array, shape (n_cv,)
+            Prediction scores for each cross-validation split on the held-out
+            test set. Scores are outputs of the `scorer` attribute function.
+        best_estimators_ : list of estimators, shape (n_cv,)
+            If initial estimator is type `GridSearchCV`, this is the list of
+            chosen estimators on each cv split.
+        best_params_ : list of dicts, shape (n_cv,)
+            If initial estimator is type `GridSearchCV`, this is the list of
+            chosen parameters on each cv split.
         """
         if feat_names is not None:
             if len(feat_names) != X.shape[1]:
@@ -103,7 +115,7 @@ class EncodingModel(object):
         # Define names for input variabels to keep track of time delays
         X_names = [(feat, delay)
                    for delay in self.delays for feat in self.feat_names]
-        self.coef_names = X_names
+        self.coef_names = np.array(X_names)
 
         # Build model instance
         if not isinstance(self.est, Pipeline):
@@ -145,12 +157,30 @@ class EncodingModel(object):
         self.cv = cv
 
     def predict(self, X):
+        """Generate predictions using a fit receptive field model.
+
+        This uses the `coef_` attribute for predictions.
+        """
         X_lag = delay_timeseries(X, self.sfreq, self.delays)
 
         Xt = self.est._pre_transform(X_lag.T)[0]
         return np.dot(Xt, self.coefs_)
 
     def coefs_as_series(self, agg=None):
+        """Return the raw coefficients as a pandas series.
+
+        Parameters
+        ----------
+        agg : None | function
+            If agg is None, all coefs across CVs will be returned. If it
+            is a function, it will be applied across CVs and the output
+            will be shape (n_coefficients,).
+
+        Outputs
+        -------
+        sr : pandas Series, shape (n_coefficients,) | (n_cv * n_coefficients)
+            The coefficients as a pandas series object.
+        """
         ix = pd.MultiIndex.from_tuples(self.coef_names, names=['feat', 'lag'])
         if agg is None:
             sr = []
@@ -167,6 +197,10 @@ class EncodingModel(object):
 
     def plot_coefficients(self, agg=None, ax=None, cmap=None,
                           interpolation='nearest', aspect='auto', **kwargs):
+        """Plot the coefficients as a 2D heatmap.
+
+        The plot will be shape (n_features, n_lags)
+        """
         from matplotlib import pyplot as plt
         cmap = plt.cm.RdBu_r if cmap is None else cmap
         agg = np.mean if agg is None else agg
@@ -326,7 +360,8 @@ def svd_clean(arr, svd_num=[0], kind='ix'):
         s_scaled = s / np.sum(s)
         s_cumulative = np.cumsum(s_scaled)
         s_cut = np.argwhere(s_cumulative > svd_num)[0]
-        if s_cut == 0: s_cut += 1
+        if s_cut == 0:
+            s_cut += 1
         svd_num = range(s_cut)
 
     U = U[:, svd_num]
