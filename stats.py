@@ -59,7 +59,7 @@ def partial_corr(C):
             beta_i = linalg.lstsq(C[:, idx], C[:, j])[0]
             beta_j = linalg.lstsq(C[:, idx], C[:, i])[0]
 
-            res_j = C[:, j] - C[:, idx].dot( beta_i)
+            res_j = C[:, j] - C[:, idx].dot(beta_i)
             res_i = C[:, i] - C[:, idx].dot(beta_j)
 
             corr = stats.pearsonr(res_i, res_j)[0]
