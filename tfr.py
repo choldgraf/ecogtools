@@ -3,7 +3,7 @@ from glob import glob
 import pandas as pd
 import numpy as np
 import sys
-from scipy.signal import decimate
+from tqdm import tqdm
 import h5io
 
 __all__ = ['EpochTFR', 'tfr_epochs', 'extract_amplitude']
@@ -196,7 +196,7 @@ class EpochTFR(object):
         return etfr
 
 
-def tfr_epochs(epoch, freqs_tfr, n_decim=10, n_cycles=4):
+def tfr_epochs(epoch, freqs_tfr, n_decim=10, n_cycles=5):
     """Extract a TFR representation from epochs w/o averaging.
 
     This will extract the TFR for the given frequencies, returning
@@ -228,7 +228,7 @@ def tfr_epochs(epoch, freqs_tfr, n_decim=10, n_cycles=4):
 
     # Do TFR decomp
     print('Extracting TFR information...')
-    for i in range(n_epoch):
+    for i in tqdm(range(n_epoch)):
         iepoch = new_epoch[i]
         idata = iepoch._data.squeeze()
         itfr = mne.time_frequency.cwt_morlet(idata, iepoch.info['sfreq'],
@@ -241,7 +241,7 @@ def tfr_epochs(epoch, freqs_tfr, n_decim=10, n_cycles=4):
     return etfr
 
 
-def extract_amplitude(inst, freqs, fwidth, normalize=False, new_len=None,
+def extract_amplitude(inst, freqs, normalize=False, new_len=None,
                       picks=None, copy=True, n_jobs=1, ):
     """Extract the time-varying amplitude for a frequency band.
 
@@ -252,13 +252,10 @@ def extract_amplitude(inst, freqs, fwidth, normalize=False, new_len=None,
     ----------
     inst : instance of Raw
         The data to have amplitude extracted
-    freqs : array of ints/floats | int/float
-        The frequencies to use. If multiple frequencies are given, amplitude
-        will be extracted at each and then averaged between frequencies.
-    fwidth : array of ints/floats | int/float
-        The width of window to use for bandpassing the signal before amplitude
-        is extracted. If multiple widths are provided, there must be one per
-        frequency.
+    freqs : array of ints/floats, shape (n_bands, 2)
+        The frequencies to use. If multiple frequency bands given, amplitude
+        will be extracted at each and then averaged between frequencies. The
+        structure of each band is fmin, fmax.
     normalize : bool
         Whether to normalize each frequency amplitude by its mean before
         averaging. This can be helpful if some frequencies have a much higher
@@ -278,19 +275,17 @@ def extract_amplitude(inst, freqs, fwidth, normalize=False, new_len=None,
 
     # Data checks
     new_len = inst.n_times if new_len is None else new_len
-    freqs, fwin = [np.atleast_1d(i) for i in [freqs, fwidth]]
+    freqs = np.atleast_2d(freqs)
+    if freqs.shape[-1] != 2:
+        raise ValueError('freqs must be shape (n_fbands, 2)')
     picks = range(len(inst.ch_names)) if picks is None else picks
-    if len(fwidth) == 1:
-        fwidth = np.repeat(np.squeeze(fwidth), len(freqs))
-    elif len(fwidth) != len(freqs):
-        raise ValueError('fwidth must be the same shape as freqs')
 
     # Filter for HG and extract amplitude
-    bands = np.zeros([len(freqs), len(inst.ch_names), inst.n_times])
-    for i, (freq, fwin) in enumerate(zip(freqs, fwidth)):
+    bands = np.zeros([freqs.shape[0], len(inst.ch_names), inst.n_times])
+    for i, (fmin, fmax) in enumerate(freqs):
         # Extract a range of frequency bands for averaging later
         inst_band = inst.copy()
-        inst_band.filter(freq-fwin/2, freq+fwin/2, n_jobs=n_jobs)
+        inst_band.filter(fmin, fmax, n_jobs=n_jobs)
         inst_band.apply_hilbert(picks, envelope=True,
                                 n_jobs=n_jobs, n_fft=new_len)
 
