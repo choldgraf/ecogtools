@@ -9,6 +9,11 @@ from glob import glob
 from datetime import datetime
 
 
+def vembed():
+    import matplotlib.pyplot as plt
+    embed()
+
+
 def ipy_post_mortem():
     """Causes ipython/idb to be called in the event of an error"""
     from IPython.core import ultratb
@@ -24,7 +29,7 @@ def add_ix_to_dataframe(df, ix_dict):
     return df
 
 
-def apply_across_df_level(df, levels, func=np.mean):
+def apply_across_df_level(df, levels, func=np.mean, verbose=False):
     """Average out a level from a dataframe.
 
     This is a convenience function to quickly average away a set
@@ -46,7 +51,8 @@ def apply_across_df_level(df, levels, func=np.mean):
     if not isinstance(levels, (list, tuple)):
         raise ValueError('level names must be in a list')
     count_levels = filter(lambda a: a not in levels, df.index.names)
-    print('Retaining levels: {0}'.format(count_levels))
+    if verbose is True:
+        print('Retaining levels: {0}'.format(count_levels))
     df = df.groupby(level=count_levels)
     df = df.agg(func)
     return df
