@@ -2,6 +2,7 @@
 import mne
 import numpy as np
 import pandas as pd
+from ecogtools.utils import embed
 
 
 def create_random_events(nev, ntimes, nclasses):
@@ -103,8 +104,10 @@ class Events(object):
         zeros = np.zeros_like(times)
 
         if meta_columns is not None:
-            m_str = ['/'.join([str(i) for i in rw[meta_columns].values])
-                     for _, rw in self.meta.iterrows()]
+            iter_meta = self.meta[meta_columns]
+            m_str = ['/'.join(['{0}__{1}'.format(col, val)
+                               for col, val in zip(iter_meta.columns, rw)])
+                     for _, rw in iter_meta.iterrows()]
             ev_id = {str(i_mstr): i + 1
                      for i, i_mstr in enumerate(np.unique(m_str))}
             events = np.array([ev_id[i_mstr] for i_mstr in m_str])
