@@ -125,9 +125,8 @@ class EncodingModel(object):
             self.est = Pipeline([('est', self.est)])
 
         # Create model metadata that we'll add to the obj later
-        mod = self.est.steps[-1][-1]
         model_data = dict(coefs_all_=[], scores_=[])
-        if isinstance(mod, GridSearchCV):
+        if isinstance(self.est.steps[-1][-1], GridSearchCV):
             model_data.update(dict(best_estimators_=[], best_params_=[]))
 
         # Fit the model and collect model results
@@ -142,6 +141,7 @@ class EncodingModel(object):
             lab_tt = labels[tt]
             self.est.fit(X_tr, y_tr)
 
+            mod = deepcopy(self.est.steps[-1][-1])
             if isinstance(mod, GridSearchCV):
                 # If it's a GridSearch, then add a "best_params" object
                 # Assume hyperparameter search
