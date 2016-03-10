@@ -5,14 +5,26 @@ import matplotlib.pyplot as plt
 from matplotlib.transforms import Affine2D
 import mpl_toolkits.axisartist.floating_axes as floating_axes
 from seaborn.palettes import diverging_palette
+from seaborn import husl
 from matplotlib.collections import PathCollection
 from matplotlib.patches import Rectangle
 from matplotlib.colors import LinearSegmentedColormap
+from sklearn.preprocessing import MinMaxScaler
 
-__all__ = ['split_plot_by_color', 'add_rotated_axis', 'AnimatedScatter']
+__all__ = ['split_plot_by_color', 'add_rotated_axis', 'AnimatedScatter',
+           'plot_activity_on_brain', 'diverging_palette_from_hex']
 
 
-def split_plot_by_color(obj, cutoff=0, cols=[15, 160], clim=None, slim=None):
+def diverging_palette_from_hex(h1, h2, as_cmap=True):
+    """Create a diverging palette from two hex codes."""
+    act_h, act_s, act_l = zip(*[husl.hex_to_husl(i) for i in [h1, h2]])
+    palette = diverging_palette(*act_h, s=np.mean(act_s),
+                                l=np.mean(act_l), as_cmap=as_cmap)
+    return palette
+
+
+def split_plot_by_color(obj, cutoff=0, cols=None, clim=None, slim=None,
+                        color_cutoffs=None, color_cutoff_value=None):
     '''Color axis data based on whether they're above/below a number.
 
     Parameters
@@ -22,14 +34,21 @@ def split_plot_by_color(obj, cutoff=0, cols=[15, 160], clim=None, slim=None):
         or a histogram
     cutoff : float | int
         The mid point for our color split
-    cols : list of ints, length 2
-        The colors at the limits of our color range. Should be in HUSL space.
+    cols : list of hex codes, length 2 | None
+        The colors at the limits of our color range. Should be a hex code that
+        will be converted to HUSL space.
     clim : float
         The width of the window (in data units) around cutoff. Data points
         beyond this window will be saturated.
     slim : list of ints, length 2 | None
         If not None, it must be a list of integers, specifying the min/max
         size of datapoints.
+    color_cutoffs : array, shape (2,)
+        A cutoff point for each axis (x, y) below which the data points will
+        be turned to cut_color.
+    color_cutoff_value : None | array, shape (4,)
+        The value to replace colors with if they are below color_cutoffs.
+        Must be a length 4 array/list of rgba values.
 
     Returns
     -------
@@ -37,12 +56,15 @@ def split_plot_by_color(obj, cutoff=0, cols=[15, 160], clim=None, slim=None):
         The modified input object
     '''
     # Define the color palette we'll use
+    cols = ['#67a9cf', '#ef8a62'] if cols is None else cols
     if isinstance(cols, (list, tuple)):
-        pal = diverging_palette(*cols, as_cmap=True)
+        if not all([isinstance(i, (str)) for i in cols]):
+            raise ValueError('Cols must be list of hex codes if not colormap')
+        pal = diverging_palette_from_hex(*cols, as_cmap=True)
     elif isinstance(cols, LinearSegmentedColormap):
         pal = cols
     else:
-        raise ValueError('Cols must be a list of ints, or colormap')
+        raise ValueError('Cols must be a list of ints/floats, or colormap')
 
     if isinstance(obj, list):
         # Histogram
@@ -60,8 +82,6 @@ def split_plot_by_color(obj, cutoff=0, cols=[15, 160], clim=None, slim=None):
         xy = obj.get_offsets()
         diff = xy[:, 1] - xy[:, 0]
         if clim is not None:
-            if not all([isinstance(i, int) for i in cols]):
-                raise ValueError('Cols must be int if clim is given')
             clim = np.max(np.abs(diff)) if clim is None else clim
             diff = diff - cutoff
             # Normalize b/w -.5 and .5, then add .5 to be 0-1
@@ -81,6 +101,31 @@ def split_plot_by_color(obj, cutoff=0, cols=[15, 160], clim=None, slim=None):
             newcolors = np.where(over[:, None], pal(float(0)), pal(float(1)))
             obj.set_color(newcolors)
         obj.set_edgecolors(edgecol)
+
+        # To grey out points below a certain cutoff
+        if color_cutoffs is not None:
+            kws_cut_lines = dict(linestyles='--', color='k', alpha=.2)
+            if color_cutoff_value is None:
+                color_cutoff_value = [.5, .5, .5, .1]
+            else:
+                if len(color_cutoff_value) != 4:
+                    raise ValueError('Color cutoff must be an array of length 4')
+            # Get current object properties
+            ax = obj.axes
+            cut_x, cut_y = color_cutoffs
+            offsets = obj.get_offsets()
+            colors = obj.get_facecolors()
+            xlim, ylim = ax.get_xlim(), ax.get_ylim()
+
+            # Make the offset cut and apply changes
+            offsets_cut = np.logical_and(offsets[:, 0] < cut_x,
+                                         offsets[:, 1] < cut_y)
+            colors[offsets_cut, :] = color_cutoff_value
+            obj.set_facecolors(colors)
+            obj.set_edgecolors(colors)
+            ax.vlines(cut_x, ax.get_ylim()[0], cut_x, **kws_cut_lines)
+            ax.hlines(cut_y, ax.get_xlim()[0], cut_y, **kws_cut_lines)
+            ax.set(xlim=xlim, ylim=ylim)
     else:
         raise ValueError('Unknown type provided: {0}'.format(type(obj)))
     return obj
@@ -142,6 +187,61 @@ def add_rotated_axis(f, extents=(-1, 1, 0, 1), sc_x=None, sc_y=None,
             axis.set_visible(False)
 
     return ax, ax_aux
+
+
+def plot_activity_on_brain(x, y, act, im, smin=10, smax=100, vmin=None,
+                           vmax=None, ax=None, cmap=None, name=None):
+    """Plot activity as a scatterplot on a brain.
+
+    Parameters
+    ----------
+    x : array, shape (n_channels,)
+        The x positions of electrodes
+    y : array, shape (n_channels,)
+        The y positions of electrodes
+    act : array, shape (n_channels,)
+        The activity values to plot as size/color on electrodes
+    im : ndarray, passed to imshow
+        An image of the brain to match with x/y positions
+    smin : int
+        The minimum size of points
+    smax : int
+        The maximum size of points
+    vmin : float | None
+        The minimum color value / size cutoff
+    vmax : float | None
+        The maximum color value / size cutoff
+    ax : axis | None
+        An axis object to plot to
+    cmap : matplotlib colormap | None
+        The colormap to plot
+    name : string | None
+        A string name for the plot title.
+
+    Returns
+    -------
+    ax : axis
+        The axis object for the plot
+    """
+    # Handle defaults
+    if ax is None:
+        _, ax = plt.subplots()
+    if cmap is None:
+        cmap = plt.cm.coolwarm
+    vmin = act.min() if vmin is None else vmin
+    vmax = act.max() if vmax is None else vmax
+
+    # Define colors + sizes
+    act_norm = (act - vmin) / float(vmax - vmin)
+    colors = cmap(act_norm)
+    sizes = np.clip(np.abs(act) / vmax, 0, 1)  # Normalize to b/w 0 and 1
+    sizes = MinMaxScaler((smin, smax)).fit_transform(sizes[:, np.newaxis])
+
+    # Plotting
+    ax.imshow(im)
+    ax.scatter(x, y, s=sizes, c=colors, cmap=cmap)
+    ax.set_title(name, fontsize=20)
+    return ax
 
 
 class AnimatedScatter(object):
