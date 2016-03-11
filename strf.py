@@ -6,6 +6,7 @@ from sklearn.grid_search import GridSearchCV
 from sklearn.metrics import mean_squared_error
 from sklearn.pipeline import Pipeline
 from mne.utils import _time_mask
+from scipy.signal import fftconvolve
 from .utils import embed
 from tqdm import tqdm
 from copy import deepcopy
@@ -17,7 +18,7 @@ __all__ = ['svd_clean',
 
 
 class EncodingModel(object):
-    def __init__(self, delays=None, est=None, scorer=None):
+    def __init__(self, delays=None, est=None, scorer=None, preproc_y=True):
         """Fit a STRF model.
 
         Fit a receptive field using time lags and a custom estimator or
@@ -40,16 +41,21 @@ class EncodingModel(object):
             (see `fit` documentation)
         scorer : function | None
             The scorer to use when evaluating on the held-out test set.
-            It must accept two 1-d arrays as inputs, and output a scalar value.
+            It must accept two 1-d arrays as inputs (the true values first,
+            and predicted values second), and output a scalar value.
             If None, it will be mean squared error.
+        preproc_y : bool
+            Whether to apply the preprocessing steps of the estimator used in
+            fitting on the predictor variables prior to model fitting.
         """
         self.delays = np.array([0]) if delays is None else delays
         self.n_delays = len(self.delays)
         self.est = Ridge() if est is None else est
         self.scorer = mean_squared_error if scorer is None else scorer
+        self.preproc_y = preproc_y
 
     def fit(self, X, y, sfreq, times=None, tmin=None, tmax=None, cv=None,
-            cv_params=None, feat_names=None, verbose=False):
+            preproc_y=False, cv_params=None, feat_names=None, verbose=False):
         """Fit the model.
 
         Fits a receptive field model. Model results are stored as attributes.
@@ -137,8 +143,9 @@ class EncodingModel(object):
             X_tt = X[:, tt].T
             y_tr = y[tr]
             y_tt = y[tt]
-            lab_tr = labels[tr]
-            lab_tt = labels[tt]
+
+            if self.preproc_y:
+                y_tr, y_tt = [self.est._pre_transform(i)[0] for i in [y_tr, y_tt]]
             self.est.fit(X_tr, y_tr)
 
             mod = deepcopy(self.est.steps[-1][-1])
@@ -153,7 +160,7 @@ class EncodingModel(object):
                 model_data['coefs_all_'].append(mod.coef_)
 
             # Fit model + make predictions
-            scr = self.scorer(self.est.predict(X_tt), y_tt)
+            scr = self.scorer(y_tt, self.est.predict(X_tt))
             model_data['scores_'].append(scr)
 
         for key, val in model_data.iteritems():
@@ -374,77 +381,6 @@ def svd_clean(arr, svd_num=[0], kind='ix'):
     Vh = Vh[svd_num, :]
     clean_arr = np.dot(U, s).dot(Vh)
     return clean_arr
-
-
-def create_torc(fmin, fmax, n_freqs, sfreq, duration=1., rip_spec_freq=2,
-                rip_temp_freq=2, mod_depth=.9, rip_phase_offset=0,
-                time_buffer=.5, combine_waves=True):
-    """
-    Parameters
-    ----------
-    fmin : int
-        The starting ripple frequency
-    fmax : int
-        The highest ripple frequency
-    n_freqs : int
-        The number of log-spaced ripples to simulate between fmin and fmax
-    sfreq : int
-        The sampling frequency of the ripples (note that fmax must be
-        less than sfreq/2)
-    duration : float
-        The duration of our created ripple stimulus (in seconds)
-    rip_spec_freq : float
-        How many frequency cycles / octave for the spectral amplitude ripples.
-        High values increase ripple frequency as we move upward in
-        spectral freq.
-    rip_temp_freq : float
-        How many temporal cycles / second for the spectral amplitude ripples.
-        Positive means ripples have down sweeps, negative means they
-        have upsweeps.
-        Larger values increase ripple frequency moving forward in time.
-    mod_depth : float
-        How large will our spectral amplitude modulations be in general.
-    rip_phase_offset : float (between 0 and 2pi)
-        The starting phase for amplitude modulation.
-    time_buffer : float
-        How much to buffer the beginning of the ripple.
-    combine_waves : bool
-        If true, simulated ripple sine waves will be summed together to yield
-        a single ripple stimulus
-
-    Outputs
-    -------
-    output : array, shape (sfreq * duration)
-        or shape (n_freqs, sfreq * duration)
-        The output ripple stimulus, or the amplitude-modulated sine waves
-        (see combine_waves)
-
-    """
-    if sfreq / 2 < fmax:
-        raise ValueError('fmax is greater than the nyquist frequency')
-
-    # Simulate time and frequencies. Add an extra 100ms for edge effects
-    time = np.arange(0, duration+time_buffer, 1/sfreq)
-    freqs = np.logspace(np.log10(fmin), np.log10(fmax), n_freqs)
-
-    # Create the ripples
-    output = np.zeros([freqs.shape[0], time.shape[0]])
-    for i, ifreq in enumerate(freqs):
-        # Define the amplitude modulation for this sine wave
-        ifreq_x = np.log2(ifreq / fmin)
-        sin_arg = 2*np.pi * (rip_temp_freq * time + rip_spec_freq * ifreq_x) +\
-            rip_phase_offset
-        amp = 1 + mod_depth * np.sin(sin_arg)
-
-        # Simulate a sine wave at this frequency, and modulate its amplitude
-        wave = np.sin(2*np.pi * time * ifreq)
-        wave *= amp
-        output[i, :] = wave
-
-    # Combine our sine waves to form a ripple if we want
-    if combine_waves is True:
-        output = output.sum(0)
-    return output[time_buffer*sfreq:]
 
 
 def mps(strf, fstep, tstep, half=False):
