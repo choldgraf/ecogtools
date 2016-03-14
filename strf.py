@@ -6,6 +6,7 @@ from sklearn.grid_search import GridSearchCV
 from sklearn.metrics import mean_squared_error
 from sklearn.pipeline import Pipeline
 from mne.utils import _time_mask
+from mne.connectivity import spectral_connectivity
 from scipy.signal import fftconvolve
 from .utils import embed
 from tqdm import tqdm
@@ -440,3 +441,95 @@ def mps(strf, fstep, tstep, half=False):
         mps_freqs = mps_freqs[halfi:]
 
     return mps_freqs, mps_times, amps
+
+
+def epochs_snr(epochs, n_perm=10, fmin=0, fmax=300, tmin=None, tmax=None,
+               kind='coh', normalize_coherence=True):
+    '''
+    Computes the coherence between the mean of subsets of trails. This can
+    be used to assess signal stability in response to a stimulus (repeated or
+    otherwise).
+
+    Parameters
+    ----------
+    epochs : instance of Epochs
+        The data on which to calculate coherence. Coherence will be calculated
+        between the mean of random splits of trials
+    n_perm : int
+        The number of permuatations to run
+    fmin : float
+        The minimum coherence frequency
+    fmax : float
+        The maximum coherence frequency
+    tmin : float
+        Start time for coherence estimation
+    tmax : float
+        Stop time for coherence estimation
+    kind : 'coh' | 'corr'
+        Whether to use coherence or correlation as the similarity statistic
+    normalize_coherence : bool
+        If True, subtract the grand mean coherence across permutations and
+        channels from the output matrix. This is a way to "baseline" your
+        coherence values to show deviations from the global means
+
+    Outputs
+    -------
+    permutations : np.array, shape (n_perms, n_signals, n_freqs)
+        A collection of coherence values for each permutation.
+
+    coh_freqs : np.array, shape (n_freqs,)
+        The frequency values in the coherence analysis
+    '''
+    sfreq = epochs.info['sfreq']
+    nep, n_chan, ntime = epochs._data.shape
+    permutations = []
+    for iperm in tqdm(xrange(n_perm)):
+        # Split our epochs into two random groups, take mean of each
+        t1, t2 = np.split(np.random.permutation(np.arange(nep)), [nep/2.])
+        mn1, mn2 = [epochs[this_ixs]._data.mean(0)
+                    for this_ixs in [t1, t2]]
+
+        # Now compute coherence between the two
+        this_similarity = []
+        for ch, this_mean1, this_mean2 in zip(epochs.ch_names, mn1, mn2):
+            this_means = np.vstack([this_mean1, this_mean2])
+            if kind == 'coh':
+                sim, coh_freqs, _, _, _ = spectral_connectivity(
+                    this_means[None, :, :], sfreq=sfreq, fmin=fmin, fmax=fmax,
+                    tmin=tmin, tmax=tmax, mt_adaptive=True, verbose=0)
+                sim = sim[1, 0, :].squeeze()
+            elif kind == 'corr':
+                sim, _ = sp.stats.pearsonr(vals1, vals2)
+            this_similarity.append(sim)
+        permutations.append(this_similarity)
+    permutations = np.array(permutations)
+
+    if normalize_coherence is True:
+        # Normalize coherence values be their grand average
+        permutations -= permutations.mean((0, 1))
+
+    if kind == 'coh':
+        return permutations, coh_freqs
+    elif kind == 'corr':
+        return permutations
+
+
+def calculate_upper_bound(coherence, n_ep):
+    """Calculate an upper bound on model performance.
+
+    Parameters
+    ----------
+    coherence : array, shape(n_channels,)
+        The estimated coherence values calculated with epochs_snr.
+    n_ep : int
+        The number of trials used in the coherence estimation
+
+    Returns
+    -------
+    upper_bound : array, shape(n_channels,)
+        The upper bound on model performance as estimated by coherence across
+        trials.
+    """
+    right_hand = .5 * (-n_ep + n_ep * np.sqrt(1. / coherence))
+    upper_bound = (right_hand + 1)**-1
+    return upper_bound
