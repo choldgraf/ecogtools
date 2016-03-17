@@ -199,7 +199,7 @@ def spectrogram_nsl(sig, sfreq, cfs, comp_kind='exp', comp_fac=3):
 
     # ---- Lateral inhibitory network
     print('Lateral inhibitory network')
-    rands = lambda x: sigp.roll_and_subtract(x, hwr=True)
+    rands = lambda x: roll_and_subtract(x, hwr=True)
     snd_lin = hears.FunctionFilterbank(snd_lpf, rands)
 
     # Initial processing
@@ -208,8 +208,8 @@ def spectrogram_nsl(sig, sfreq, cfs, comp_kind='exp', comp_fac=3):
     # Time integration.
     print('leaky integration')
     for i in range(out.shape[1]):
-        out[:, i] = sigp.leaky_integrate(out[:, i], time_const=8,
-                                         sfreq=float(sfreq))
+        out[:, i] = leaky_integrate(out[:, i], time_const=8,
+                                    sfreq=float(sfreq))
     return out
 
 
@@ -276,3 +276,35 @@ def create_center_frequencies(stt=180, stp=7000, n_bands=32, kind='log'):
     else:
         print("I don't know what kind of spacing that is")
     return freqs
+
+
+def roll_and_subtract(sig, n=1, axis=1, hwr=False):
+    '''Rolls the input matrix along the specifies axis, then
+    subtract this from the original signal.
+
+    This is similar to the lateral inhibitory network from Shamma's
+    NSL toolbox.
+
+    Parameters
+    ----------
+    sig : array
+        The signal we use for the subtraction
+    n : int
+        The amount to roll by. 1 corresponds to a "lateral derivative".
+    axis : int
+        The axis to roll
+    hwr : bool
+        Whether to include a half-wave rectification after doing the
+        subtraction.
+
+    Returns
+    -------
+    diff : array, shape==sig.shape
+        The input array after rolling/subtracting.
+    '''
+    diff = np.roll(sig, -n, axis=axis)
+    diff[:, -n:] = 0
+    diff = np.subtract(sig, diff)
+    if hwr is True:
+        diff = np.clip(diff, 0, np.inf)
+    return diff
