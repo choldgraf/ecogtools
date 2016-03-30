@@ -8,6 +8,7 @@ from sklearn.pipeline import Pipeline
 from mne.utils import _time_mask
 from mne.connectivity import spectral_connectivity
 from scipy.signal import fftconvolve
+from scipy.stats import pearsonr
 from .utils import embed
 from tqdm import tqdm
 from copy import deepcopy
@@ -401,6 +402,11 @@ def mps(strf, fstep, tstep, half=False):
 
     Returns
     -------
+    mps_freqs : array
+        The values corresponding to spectral modulations, in cycles / octave
+        or cycles / Hz depending on the units of fstep
+    mps_times : array
+        The values corresponding to temporal modulations, in Hz
     amps : array
         The MPS of the input strf
 
@@ -443,10 +449,10 @@ def mps(strf, fstep, tstep, half=False):
     return mps_freqs, mps_times, amps
 
 
-def epochs_snr(epochs, n_perm=10, fmin=0, fmax=300, tmin=None, tmax=None,
+def epochs_snr(epochs, n_perm=10, fmin=1, fmax=300, tmin=None, tmax=None,
                kind='coh', normalize_coherence=True):
     '''
-    Computes the coherence between the mean of subsets of trails. This can
+    Computes the coherence between the mean of subsets of epochs. This can
     be used to assess signal stability in response to a stimulus (repeated or
     otherwise).
 
@@ -466,7 +472,9 @@ def epochs_snr(epochs, n_perm=10, fmin=0, fmax=300, tmin=None, tmax=None,
     tmax : float
         Stop time for coherence estimation
     kind : 'coh' | 'corr'
-        Whether to use coherence or correlation as the similarity statistic
+        Specifies the similarity statistic.
+        If corr, calculate correlation between the mean of subsets of epochs.
+        If coh, then calculate the coherence.
     normalize_coherence : bool
         If True, subtract the grand mean coherence across permutations and
         channels from the output matrix. This is a way to "baseline" your
@@ -481,7 +489,10 @@ def epochs_snr(epochs, n_perm=10, fmin=0, fmax=300, tmin=None, tmax=None,
         The frequency values in the coherence analysis
     '''
     sfreq = epochs.info['sfreq']
+    epochs = epochs.crop(tmin, tmax, copy=True)
     nep, n_chan, ntime = epochs._data.shape
+
+    # Run permutations
     permutations = []
     for iperm in tqdm(xrange(n_perm)):
         # Split our epochs into two random groups, take mean of each
@@ -489,23 +500,26 @@ def epochs_snr(epochs, n_perm=10, fmin=0, fmax=300, tmin=None, tmax=None,
         mn1, mn2 = [epochs[this_ixs]._data.mean(0)
                     for this_ixs in [t1, t2]]
 
-        # Now compute coherence between the two
+        # Now compute similarity between the two
         this_similarity = []
         for ch, this_mean1, this_mean2 in zip(epochs.ch_names, mn1, mn2):
             this_means = np.vstack([this_mean1, this_mean2])
             if kind == 'coh':
+                # import ecogtools as et; et.embed()
+                this_means = this_means[np.newaxis, :, :]
+                ixs = ([0], [1])
                 sim, coh_freqs, _, _, _ = spectral_connectivity(
-                    this_means[None, :, :], sfreq=sfreq, fmin=fmin, fmax=fmax,
-                    tmin=tmin, tmax=tmax, mt_adaptive=True, verbose=0)
-                sim = sim[1, 0, :].squeeze()
+                    this_means, sfreq=sfreq, method='coh', fmin=fmin, fmax=fmax,
+                    tmin=tmin, tmax=tmax, indices=ixs, verbose=0)
+                sim = sim.squeeze()
             elif kind == 'corr':
-                sim, _ = sp.stats.pearsonr(vals1, vals2)
+                sim, _ = pearsonr(*this_means)
             this_similarity.append(sim)
         permutations.append(this_similarity)
     permutations = np.array(permutations)
 
     if normalize_coherence is True:
-        # Normalize coherence values be their grand average
+        # Normalize coherence values to their grand average
         permutations -= permutations.mean((0, 1))
 
     if kind == 'coh':
@@ -514,22 +528,25 @@ def epochs_snr(epochs, n_perm=10, fmin=0, fmax=300, tmin=None, tmax=None,
         return permutations
 
 
-def calculate_upper_bound(coherence, n_ep):
+def calculate_upper_bound(similarity, n_ep):
     """Calculate an upper bound on model performance.
 
     Parameters
     ----------
-    coherence : array, shape(n_channels,)
-        The estimated coherence values calculated with epochs_snr.
+    similarity : array, any shape
+        The estimated similarity across epochs as estimated by epochs_snr. This
+        is either the correlation or coherence between means of subsets of
+        trials for one electrode.
     n_ep : int
-        The number of trials used in the coherence estimation
+        The number of epochs used in the coherence estimation
 
     Returns
     -------
-    upper_bound : array, shape(n_channels,)
+    upper_bound : array, shape == similarity.shape
         The upper bound on model performance as estimated by coherence across
-        trials.
+        trials. This is either the expected coherence or expected correlation,
+        depending on which type of input is given in similarity.
     """
-    right_hand = .5 * (-n_ep + n_ep * np.sqrt(1. / coherence))
-    upper_bound = (right_hand + 1)**-1
+    right_hand = .5 * (-n_ep + n_ep * np.sqrt(1. / similarity))
+    upper_bound = 1. / (right_hand + 1)
     return upper_bound

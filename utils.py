@@ -2,6 +2,7 @@
 
 from IPython import embed
 import numpy as np
+import pandas as pd
 import mne
 import sys
 from os import path, sep, remove
@@ -22,10 +23,10 @@ def ipy_post_mortem():
 
 
 def add_ix_to_dataframe(df, ix_dict):
-    df = df.copy()
-    for nm, ix in ix_dict.iteritems():
-        df[nm] = ix
-        df = df.set_index(nm, append=True)
+    for key, val in ix_dict.items():
+        ix = np.repeat(val, df.shape[0])
+        ix = pd.Index(ix, name=key)
+        df = df.set_index(ix, append=True)
     return df
 
 
