@@ -1,5 +1,7 @@
 import numpy as np
 from sklearn.preprocessing import StandardScaler
+from mne.filter import low_pass_filter
+import statsmodels.api as sm
 
 
 def car(signal, grouping=None, exclude_elecs=None, agg_func=np.mean,
@@ -145,3 +147,81 @@ def rms(arr):
     arr = arr ** 2
     rms = np.sqrt(np.mean(arr))
     return rms
+
+
+def decimate_nophase(arr, sfreq, q, **kwargs):
+    """Decimate a signal without shifting the phase.
+
+    Parameters
+    ----------
+    arr : numpy array, shape (..., n_times)
+        The data we'll decimate.
+    sfreq : float | int
+        The sampling frequency of the signal.
+    q : integer, factor of sfreq
+        How much to decimate the signal
+    kwargs : passed to mne low_pass_filter function.
+
+    Returns
+    -------
+    arr : np.array, shape (..., n_times / q).
+        The decimated data
+    """
+    # Calculate downsampling parameters
+    arr = np.atleast_2d(arr)
+    if np.mod(sfreq, q) != 0:
+        raise ValueError('q must be a factor of sfreq')
+    new_sfreq = sfreq / q
+
+    # Perform the low-pass filter then decimate manually
+    arr = low_pass_filter(arr, sfreq, new_sfreq / 2., **kwargs)
+    arr = arr[..., ::q]
+    return arr
+
+
+def compress_signal(sig, kind='log', fac=None):
+    '''
+    Parameters
+    ----------
+    sig : array_like
+        the signal to compress
+    kind : string, one of ['log', 'exp', 'sig'], or None
+        Whether we use log-compression, exponential compression,
+        or sigmoidal compression. If None, then do nothing.
+    fac : float, int
+        The factor for the sigmoid if we're using that kind of compression
+        Or the root for the exponent if exponential compression.
+
+    Returns
+    -------
+    out : array, shape(sig)
+        The compressed signal
+    '''
+    # Compression
+    if kind == 'sig':
+        out = sigp.sigmoid(sig, fac=fac)
+    elif kind == 'log':
+        out = np.log(sig)
+    elif kind == 'exp':
+        comp = lambda x, n: x**(1. / n)
+        out = comp(sig, fac)
+    elif kind is None:
+        out = sig
+    else:
+        raise Exception('You need to specify the correct kind of compression')
+    return out
+
+
+def coh_to_bits(coh):
+    """Convert coherence values to a measure of bits."""
+    return -np.log2(1-coh)
+
+
+def remove_1_over_f(psd):
+    """Fit a line with robust regression and return the residuals."""
+    n_x = psd.shape[0]
+    X = np.arange(n_x)
+    mod = sm.RLM(psd, sm.add_constant(X)).fit()
+    iint, icoef = mod.params
+    psd_resid = psd - (icoef * X + iint)
+    return psd_resid
