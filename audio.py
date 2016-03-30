@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from brian import Hz, kHz
 from brian import hears
+from .sig import compress_signal
 
 
 def create_torc(fmin, fmax, n_freqs, sfreq, duration=1., rip_spec_freq=2,
@@ -77,11 +78,9 @@ def create_torc(fmin, fmax, n_freqs, sfreq, duration=1., rip_spec_freq=2,
     return output[time_buffer*sfreq:]
 
 
-def spectrogram_audio(audio, n_bands=32, sfreq=44100,
-                      sig_fac=.1, compression='log',
-                      low_p_cut=None, lin=True, n_jobs=3,
-                      filt_kind='nsl', freq_kind='erb',
-                      Flo=170, Fhi=7000, amp='atonce'):
+def spectrogram_audio(audio, n_bands=32, sfreq=44100.,
+                      filt_kind='nsl', freq_spacing='erb',
+                      fmin=170, fmax=7000, **kws_spec):
     ''' Extracts a (roughly) auditory system spectrogram.
     This is loosely based on the NSL toolbox. Note that many
     of these steps can be controlled with various flags
@@ -102,44 +101,39 @@ def spectrogram_audio(audio, n_bands=32, sfreq=44100,
         The input sound.
     n_bands : int, default=32
         The number of frequency bands in our filter
-    sig_fac : float
-        The sigmoidal compression factor. See `compress_signal` for usage
-    lin : bool
-        Whether to include the first order derivative
-        AKA the lateral inhibitory network
-    low_p_cut : int | None
-        The cutoff for the lowpass filter, or None for no filter
     filt_kind : one of ['drnl', 'nsl']
         How to extract the spectrogram. Options mean:
         drnl : a self-contained cochlea model,
                so we don't add any extra processing afterward. However,
-               it seems to be unstable for high F (>5000). Look into brian.hears
-               for more documentation on this.
-        nsl : an implementation of the wav2aud function in the NSL toolbox.
-              It is implemented with brian.hears
-    freq_kind : string ['erb', 'log']
+               it seems to be unstable for high F (>5000). Look into
+               brian.hears for more documentation on this.
+        nsl : An implementation of the wav2aud function in the NSL toolbox.
+              It is meant to mimic many processing steps of the cochlea and
+              early auditory pathways. It is implemented with brian.hears.
+    freq_spacing : string ['erb', 'log']
         What frequency spacing to use
-    amp : string ['online', 'atonce']
-        Do we calculate the envelope of the signal online or at once?
+    kws_spec : dictionary
+        Keywords to be passed to the spectrogram function
+        (DRNL or spectrogram_nsl)
 
     OUTPUTS
     --------
-    out     : DataFrame, time x features
-        The extracted spectrogram.
-
+    spec : array, shape (n_frequencies, n_times)
+        The extracted audio spectrogram.
+    freqs : array, shape (n_frequencies,)
+        The center frequencies for the spectrogram
     '''
     # Auditory filterbank + amplitude extraction
-    print('Running filterbank with {0} filters'.format(n_bands))
-    csfreq = create_center_frequencies(Flo, Fhi, n_bands, kind=freq_kind)
+    cfreqs = create_center_frequencies(fmin, fmax, n_bands, kind=freq_spacing)
 
     if filt_kind == 'drnl':
         sfreq = float(sfreq)*Hz
         snd = hears.Sound(audio, samplerate=sfreq)
-        spec = hears.DRNL(snd, cfs, type='human').process()
-        return spec, cfs
+        spec = hears.DRNL(snd, cfreqs, type='human', **kws_spec).process()
+        spec = spec.T
     elif filt_kind == 'nsl':
-        spec = spectrogram_nsl(audio, sfreq, cfs)
-        return spec, cfs
+        spec = spectrogram_nsl(audio, sfreq, cfreqs, **kws_spec)
+    return spec, cfreqs
 
 
 def spectrogram_nsl(sig, sfreq, cfs, comp_kind='exp', comp_fac=3):
@@ -171,10 +165,12 @@ def spectrogram_nsl(sig, sfreq, cfs, comp_kind='exp', comp_fac=3):
     comp_fac : int
         The compression factor to pass to `compress_signal`.
 
-    Returns
-    -------
-    out : array, shape (n_frequencies, n_times)
-        The spectrogram representation of the input sound.
+    OUTPUTS
+    --------
+    spec : array, shape (n_frequencies, n_times)
+        The extracted audio spectrogram.
+    freqs : array, shape (n_frequencies,)
+        The center frequencies for the spectrogram
     '''
     sfreq = float(sfreq)*Hz
     snd = hears.Sound(sig, samplerate=sfreq)
@@ -210,7 +206,7 @@ def spectrogram_nsl(sig, sfreq, cfs, comp_kind='exp', comp_fac=3):
     for i in range(out.shape[1]):
         out[:, i] = leaky_integrate(out[:, i], time_const=8,
                                     sfreq=float(sfreq))
-    return out
+    return out.T
 
 
 def leaky_integrate(arr, time_const=8, sfreq=1000):
@@ -236,6 +232,7 @@ def leaky_integrate(arr, time_const=8, sfreq=1000):
     out : array, shape (n_times)
         The integrated signal.
     '''
+    from scipy.signal import fftconvolve
     time = np.arange(sfreq)
 
     # Convert time constant from ms to whatever Fs is

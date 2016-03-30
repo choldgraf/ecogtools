@@ -7,3 +7,5 @@ from .viz import *
 from .strf import *
 from .utils import *
 from .mneutils import *
+from .connectivity import *
+from .audio import *
