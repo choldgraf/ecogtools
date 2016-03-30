@@ -5,11 +5,20 @@ from mne.parallel import parallel_func
 from mne.time_frequency import cwt_morlet
 from mne.preprocessing import peak_finder
 from mne.utils import ProgressBar
+from mne.baseline import rescale
+
+# Supported PAC functions
+_pac_funcs = ['plv', 'glm', 'mi_tort', 'mi_canolty', 'ozkurt', 'otc']
+# Calculate the phase of the amplitude signal for these PAC funcs
+_hi_phase_funcs = ['plv']
 
 
-def phase_amplitude_coupling(inst, f_phase, f_amp, ixs, pac_func='plv',
-                             ev=None, tmin=None, tmax=None, npad='auto',
-                             n_jobs=1, verbose=None):
+def phase_amplitude_coupling(inst, f_phase, f_amp, ixs, pac_func='ozkurt',
+                             ev=None, ev_grouping=None, tmin=None, tmax=None,
+                             baseline=None, baseline_kind='mean',
+                             scale_amp_func=None, use_times=None, npad='auto',
+                             return_data=False, concat_epochs=True, n_jobs=1,
+                             verbose=None):
     """ Compute phase-amplitude coupling between pairs of signals using pacpy.
 
     Parameters
@@ -28,6 +37,9 @@ def phase_amplitude_coupling(inst, f_phase, f_amp, ixs, pac_func='plv',
     ev : array-like, shape (n_events,) | None
         Indices for events. To be supplied if data is 2D and output should be
         split by events. In this case, tmin and tmax must be provided
+    ev_grouping : array-like, shape (n_events,) | None
+        Calculate PAC in each group separately, the output will then be of
+        length unique(ev)
     tmin : float | None
         If ev is not provided, it is the start time to use in inst. If ev
         is provided, it is the time (in seconds) to include before each
@@ -36,10 +48,28 @@ def phase_amplitude_coupling(inst, f_phase, f_amp, ixs, pac_func='plv',
         If ev is not provided, it is the stop time to use in inst. If ev
         is provided, it is the time (in seconds) to include after each
         event index.
+    baseline : array, shape (2,) | None
+        If ev is provided, it is the min/max time (in seconds) to include in
+        the amplitude baseline. If None, no baseline is applied.
+    baseline_kind : str
+        What kind of baseline to use. See mne.baseline.rescale for options.
+    scale_amp_func : None | function
+        If not None, will be called on each amplitude signal in order to scale
+        the values. Function must accept an N-D input and will operate on the
+        last dimension. E.g., skl.preprocessing.scale
+    use_times : array, shape (2,) | None
+        If ev is provided, it is the min/max time (in seconds) to include in
+        the PAC analysis. If None, the whole window (tmin to tmax) is used.
     npad : int | 'auto'
         The amount to pad each signal by before calculating phase/amplitude if
         the input signal is type Raw. If 'auto' the signal will be padded to
         the next power of 2 in length.
+    return_data : bool
+        If True, return the phase and amplitude data along with the PAC values.
+    concat_epochs : bool
+        If True, epochs will be concatenated before calculating PAC values. If
+        epochs are relatively short, this is a good idea in order to improve
+        stability of the PAC metric.
     n_jobs : int
         Number of CPUs to use in the computation.
     verbose : bool, str, int, or None
@@ -73,15 +103,30 @@ def phase_amplitude_coupling(inst, f_phase, f_amp, ixs, pac_func='plv',
     else:
         raise ValueError('Input must be of type Raw')
     pac = _phase_amplitude_coupling(data, sfreq, f_phase, f_amp, ixs,
-                                    pac_func=pac_func, ev=ev, tmin=tmin,
-                                    tmax=tmax, npad=npad, n_jobs=n_jobs,
-                                    verbose=verbose)
-    return pac
+                                    pac_func=pac_func, ev=ev,
+                                    ev_grouping=ev_grouping,
+                                    tmin=tmin, tmax=tmax, baseline=baseline,
+                                    baseline_kind=baseline_kind,
+                                    scale_amp_func=scale_amp_func,
+                                    use_times=use_times, npad=npad,
+                                    return_data=return_data,
+                                    concat_epochs=concat_epochs,
+                                    n_jobs=n_jobs, verbose=verbose)
+    # Collect the data properly
+    if return_data is True:
+        pac, data_ph, data_am = pac
+        return pac, data_ph, data_am
+    else:
+        return pac
 
 
 def _phase_amplitude_coupling(data, sfreq, f_phase, f_amp, ixs,
-                              pac_func='plv', ev=None, tmin=None, tmax=None,
-                              npad='auto', n_jobs=1, verbose=None):
+                              pac_func='plv', ev=None, ev_grouping=None,
+                              tmin=None, tmax=None,
+                              baseline=None, baseline_kind='mean',
+                              scale_amp_func=None, use_times=None, npad='auto',
+                              return_data=False, concat_epochs=True, n_jobs=1,
+                              verbose=None):
     """ Compute phase-amplitude coupling using pacpy.
 
     Parameters
@@ -102,6 +147,9 @@ def _phase_amplitude_coupling(data, sfreq, f_phase, f_amp, ixs,
     ev : array-like, shape (n_events,) | None
         Indices for events. To be supplied if data is 2D and output should be
         split by events. In this case, tmin and tmax must be provided
+    ev_grouping : array-like, shape (n_events,) | None
+        Calculate PAC in each group separately, the output will then be of
+        length unique(ev)
     tmin : float | None
         If ev is not provided, it is the start time to use in inst. If ev
         is provided, it is the time (in seconds) to include before each
@@ -110,10 +158,28 @@ def _phase_amplitude_coupling(data, sfreq, f_phase, f_amp, ixs,
         If ev is not provided, it is the stop time to use in inst. If ev
         is provided, it is the time (in seconds) to include after each
         event index.
+    baseline : array, shape (2,) | None
+        If ev is provided, it is the min/max time (in seconds) to include in
+        the amplitude baseline. If None, no baseline is applied.
+    baseline_kind : str
+        What kind of baseline to use. See mne.baseline.rescale for options.
+    scale_amp_func : None | function
+        If not None, will be called on each amplitude signal in order to scale
+        the values. Function must accept an N-D input and will operate on the
+        last dimension. E.g., skl.preprocessing.scale
+    use_times : array, shape (2,) | None
+        If ev is provided, it is the min/max time (in seconds) to include in
+        the PAC analysis. If None, the whole window (tmin to tmax) is used.
     npad : int | 'auto'
         The amount to pad each signal by before calculating phase/amplitude if
         the input signal is type Raw. If 'auto' the signal will be padded to
         the next power of 2 in length.
+    return_data : bool
+        If True, return the phase and amplitude data along with the PAC values.
+    concat_epochs : bool
+        If True, epochs will be concatenated before calculating PAC values. If
+        epochs are relatively short, this is a good idea in order to improve
+        stability of the PAC metric.
     n_jobs : int
         Number of CPUs to use in the computation.
     verbose : bool, str, int, or None
@@ -126,6 +192,8 @@ def _phase_amplitude_coupling(data, sfreq, f_phase, f_amp, ixs,
         given in ixs.
     """
     from pacpy import pac as ppac
+    if pac_func not in _pac_funcs:
+        raise ValueError("PAC function {0} is not supported".format(pac_func))
     func = getattr(ppac, pac_func)
     ixs = np.array(ixs, ndmin=2)
 
@@ -135,34 +203,61 @@ def _phase_amplitude_coupling(data, sfreq, f_phase, f_amp, ixs,
         raise ValueError('Indices must have have a 2nd dimension of length 2')
     if len(f_phase) != 2 or len(f_amp) != 2:
         raise ValueError('Frequencies must be specified w/ a low/hi tuple')
-    if pac_func not in ppac.__dict__.keys():
-        raise ValueError("That PAC function doesn't exist in PacPy")
 
     print('Pre-filtering data and extracting phase/amplitude...')
+    hi_phase = pac_func in _hi_phase_funcs
     data_ph, data_am, ix_map_ph, ix_map_am = _pre_filter_ph_am(
-        data, sfreq, ixs, f_phase, f_amp, npad=npad)
+        data, sfreq, ixs, f_phase, f_amp, npad=npad, hi_phase=hi_phase,
+        scale_amp_func=scale_amp_func)
     ixs_new = [(ix_map_ph[i], ix_map_am[j]) for i, j in ixs]
+
     if ev is not None:
-        data_ph = _array_raw_to_epochs(data_ph, sfreq, ev, tmin, tmax)
-        data_am = _array_raw_to_epochs(data_am, sfreq, ev, tmin, tmax)
+        use_times = [tmin, tmax] if use_times is None else use_times
+        ev_grouping = np.ones_like(ev) if ev_grouping is None else ev_grouping
+        data_ph, times, msk_ev = _array_raw_to_epochs(
+            data_ph, sfreq, ev, tmin, tmax)
+        data_am, times, msk_ev = _array_raw_to_epochs(
+            data_am, sfreq, ev, tmin, tmax)
+
+        # In case we cut off any events
+        ev, ev_grouping = [i[msk_ev] for i in [ev, ev_grouping]]
+
+        # Baselining before returning
+        rescale(data_am, times, baseline, baseline_kind, copy=False)
+        msk_time = _time_mask(times, *use_times)
+        data_am, data_ph = [i[..., msk_time] for i in [data_am, data_ph]]
+
+        # Stack epochs to a single trace if specified
+        if concat_epochs is True:
+            ev_unique = np.unique(ev_grouping)
+            concat_data = []
+            for i_ev in ev_unique:
+                msk_events = ev_grouping == i_ev
+                concat_data.append([np.hstack(i[msk_events])
+                                    for i in [data_am, data_ph]])
+            data_am, data_ph = zip(*concat_data)
     else:
         data_ph, data_am = [data_ph], [data_am]
 
     n_ep = len(data_ph)
-    pbar = ProgressBar(n_ep)
     pac = np.zeros([n_ep, len(ixs_new)])
+    pbar = ProgressBar(n_ep)
     for iep, (ep_ph, ep_am) in enumerate(zip(data_ph, data_am)):
-        pac_ep = []
         for iix, (i_ix_ph, i_ix_am) in enumerate(ixs_new):
             # f_phase and f_amp won't be used in this case
             pac[iep, iix] = func(ep_ph[i_ix_ph], ep_am[i_ix_am],
                                  f_phase, f_amp, filterfn=False)
         pbar.update_with_increment_value(1)
-    return pac
+    if return_data:
+        return pac, data_ph, data_am
+    else:
+        return pac
 
 
 def _pre_filter_ph_am(data, sfreq, ixs, f_ph, f_am, filterfn=None,
-                      npad=None, kws_filt=None):
+                      npad=None, hi_phase=False, scale_amp_func=None,
+                      kws_filt=None):
+    """Filter for phase/amp only once for each channel."""
     from pacpy.pac import _range_sanity
     from scipy.signal import hilbert
     filterfn = band_pass_filter if filterfn is None else filterfn
@@ -186,14 +281,20 @@ def _pre_filter_ph_am(data, sfreq, ixs, f_ph, f_am, filterfn=None,
 
     data_am = np.hstack([data[ix_am], np.zeros([len(ix_am), npad])])
     data_am = filterfn(data_am, sfreq, *f_am, **kws_filt)
-    data_am = np.abs(hilbert(data_am))[..., :n_times]
+    data_am = np.abs(hilbert(data_am))
+    if hi_phase is True:
+        data_am = filterfn(data_am, sfreq, *f_ph, **kws_filt)
+        data_am = np.angle(hilbert(data_am))
+    data_am = data_am[..., :n_times]
     ix_map_am = {ix: i for i, ix in enumerate(ix_am)}
 
+    if scale_amp_func is not None:
+        data_am = scale_amp_func(data_am, axis=-1)
     return data_ph, data_am, ix_map_ph, ix_map_am
 
 
 def _filter_ph_am(xph, xam, f_ph, f_am, sfreq, filterfn=None, kws_filt=None):
-    """Aux function for phase/amplitude filtering"""
+    """Aux function for phase/amplitude filtering for one pair of channels"""
     from pacpy.pac import _range_sanity
     from scipy.signal import hilbert
     filterfn = band_pass_filter if filterfn is None else filterfn
@@ -209,60 +310,32 @@ def _filter_ph_am(xph, xam, f_ph, f_am, sfreq, filterfn=None, kws_filt=None):
     return xph, xam
 
 
-def _my_pac(x, ix_phase, ix_amp, f_phase, f_amp, func,
-            ev=None, tmin=None, tmax=None, sfreq=None, npad='auto'):
-    """Aux function for PAC.
-
-    This includes support for epochs-like shapes, as well as for the user
-    to provide a list of event indices (ev) in order to do all filtering before
-    the epochs are created."""
-    pac = []
-    for ep in x:
-        xph = np.hstack([ep[ix_phase], np.zeros(npad)])
-        xam = np.hstack([ep[ix_amp], np.zeros(npad)])
-        if ev is not None:
-            # Checks for proper inputs/shape
-            ev = np.array(ev)
-            if x.shape[0] > 1:
-                raise ValueError("If ev is given, input must have"
-                                 " first dim (epochs) length 1")
-            if ev.ndim > 1:
-                raise ValueError('Events must be a 1-d array')
-            if any([tmin is None, tmax is None]):
-                raise ValueError('If ev is given,'
-                                 ' tmin/tmax must be given')
-            if not isinstance(sfreq, (int, float)):
-                raise ValueError('If ev is given, sfreq must be given')
-
-            # Pre-filter the data, then turn into epochs
-            xph, xam = _filter_ph_am(xph, xam, f_phase, f_amp, sfreq)
-            epochs = np.vstack([xph, xam])
-            epochs = _array_raw_to_epochs(epochs, sfreq, ev, tmin, tmax)
-
-            # Run the PAC code w/o using a filtering function
-            for ep_f in epochs:
-                # f_phase and f_amp won't be used in this case
-                pac.append(func(ep_f[0], ep_f[1],
-                           f_phase, f_amp, filterfn=False))
-        else:
-            pac.append(func(xph, xam, f_phase, f_amp))
-    return np.array(pac)
-
-
 def _array_raw_to_epochs(x, sfreq, ev, tmin, tmax):
     """Aux function to create epochs from a 2D array"""
-    win_size = sfreq * (tmax - tmin)
-    msk_remove = np.logical_or(ev < win_size, (ev > (x.shape[-1] - win_size)))
-    if any(msk_remove):
+    if ev.ndim != 1:
+        raise ValueError('ev must be 1D')
+    if ev.dtype != int:
+        raise ValueError('ev must be of dtype int')
+
+    # Check that events won't be cut off
+    n_times = x.shape[-1]
+    min_ix = 0 - sfreq * tmin
+    max_ix = n_times - sfreq * tmax
+    msk_keep = np.logical_and(ev > min_ix, ev < max_ix)
+
+    if not all(msk_keep):
         print('Some events will be cut off!')
-        ev = ev[~msk_remove]
-    times = np.arange(x.shape[-1]) / float(sfreq)
+        ev = ev[msk_keep]
+
+    # Pull events from the raw data
     epochs = []
     for ix in ev:
-        ix_min, ix_max = [ix + int(i_tlim * sfreq) for i_tlim in [tmin, tmax]]
+        ix_min, ix_max = [ix + int(i_tlim * sfreq)
+                          for i_tlim in [tmin, tmax]]
         epochs.append(x[np.newaxis, :, ix_min:ix_max])
     epochs = np.concatenate(epochs, axis=0)
-    return epochs
+    times = np.arange(epochs.shape[-1]) / float(sfreq) + tmin
+    return epochs, times, msk_keep
 
 
 # For the viz functions
@@ -271,6 +344,7 @@ def _extract_phase_and_amp(data_phase, data_amp, sfreq, freqs_phase,
     """Extract the phase and amplitude of two signals for PAC viz.
     data should be shape (n_epochs, n_times)"""
     from sklearn.preprocessing import scale
+
     # Morlet transform to get complex representation
     band_ph = cwt_morlet(data_phase, sfreq, freqs_phase)
     band_amp = cwt_morlet(data_amp, sfreq, freqs_amp)
@@ -294,7 +368,7 @@ def _pull_data(inst, ix_ph, ix_amp, ev=None, tmin=None, tmax=None):
         data_ph = inst._data[:, ix_ph, :]
         data_amp = inst._data[:, ix_amp, :]
     elif isinstance(inst, _BaseRaw):
-        data = inst[[ix_ph, ix_amp], :][0]
+        data = inst[[ix_ph, ix_amp], :][0].squeeze()
         data_ph, data_amp = [i[np.newaxis, ...] for i in data]
     return data_ph, data_amp
 
@@ -341,6 +415,7 @@ def phase_locked_amplitude(inst, freqs_phase, freqs_amp,
     data_ph, data_amp = _pull_data(inst, ix_ph, ix_amp)
     angle_ph, band_ph, amp = _extract_phase_and_amp(
         data_ph, data_amp, sfreq, freqs_phase, freqs_amp)
+
     angle_ph = angle_ph.mean(0)  # Mean across freq bands
     band_ph = band_ph.mean(0)
 
@@ -355,18 +430,19 @@ def phase_locked_amplitude(inst, freqs_phase, freqs_amp,
         # Set datapoints outside out times to nan so we can drop later
         if len(mask_times) != angle_ph.shape[-1]:
             raise ValueError('mask_times must be == in length to data')
-        band_ph[..., mask_times] = np.nan
+        band_ph[..., ~mask_times] = np.nan
 
-    data_phase = np.array([band_ph[int(i + ixmin):int(i + ixmax)]
-                           for i in phase_peaks])
-    data_amp = np.array([amp[:, int(i + ixmin):int(i + ixmax)]
-                         for i in phase_peaks])
+    data_phase, times, msk_window = _array_raw_to_epochs(
+        band_ph[np.newaxis, :], sfreq, phase_peaks, tmin, tmax)
+    data_amp, times, msk_window = _array_raw_to_epochs(
+        amp, sfreq, phase_peaks, tmin, tmax)
+    data_phase, data_amp = [i.squeeze() for i in data_phase, data_amp]
+
     # Drop any peak events where there was a nan
-    keep_rows = np.where(~np.isnan(data_ph).any(-1))[0]
+    keep_rows = np.where(~np.isnan(data_phase).any(-1))[0]
     data_phase, data_amp = [i[keep_rows, ...] for i in [data_phase, data_amp]]
 
     # Average across phase peak events
-    times = np.linspace(tmin, tmax, data_amp.shape[-1])
     data_amp = data_amp.mean(0)
     data_phase = data_phase.mean(0)
     return data_amp, data_phase, times
