@@ -3,27 +3,32 @@
 import numpy as np
 from scipy import stats, linalg
 from statsmodels.distributions.empirical_distribution import ECDF
+from sklearn.preprocessing import scale
 
 
 __all__ = ['partial_corr',
-           'permutation_diff_between']
+           'bootstrap_coefficients']
 
 
-def partial_corr(C):
+def partial_corr(C, do_scale=False):
     """
-    Returns the sample linear partial correlation coefficients between pairs of variables in C, controlling 
-    for the remaining variables in C.
+    Returns the sample linear partial correlation coefficients between pairs
+    of variables in C, controlling for the remaining variables in C.
 
     Parameters
     ----------
     C : array-like, shape (n, p)
-        Array with the different variables. Each column of C is taken as a variable
+        Array with the different variables. Each column of C is taken
+        as a variable
+    do_scale : bool
+        Whether to scale each column of C to mean==0 and variance==1
+        before calculations
 
     Returns
     -------
     P : array-like, shape (p, p)
-        P[i, j] contains the partial correlation of C[:, i] and C[:, j] controlling
-        for the remaining variables in C.
+        P[i, j] contains the partial correlation of C[:, i] and C[:, j]
+        controlling for the remaining variables in C.
 
     Information
     -----------
@@ -32,14 +37,18 @@ def partial_corr(C):
     correlation (might be slow for a huge number of variables). The 
     algorithm is detailed here:
         http://en.wikipedia.org/wiki/Partial_correlation#Using_linear_regression
-    Taking X and Y two variables of interest and Z the matrix with all the variable minus {X, Y},
-    the algorithm can be summarized as
-        1) perform a normal linear least-squares regression with X as the target and Z as the predictor
+    Taking X and Y two variables of interest and Z the matrix with all the
+    variable minus {X, Y}, the algorithm can be summarized as
+        1) perform a normal linear least-squares regression with X as the
+            target and Z as the predictor
         2) calculate the residuals in Step #1
-        3) perform a normal linear least-squares regression with Y as the target and Z as the predictor
+        3) perform a normal linear least-squares regression with Y as the
+            target and Z as the predictor
         4) calculate the residuals in Step #3
-        5) calculate the correlation coefficient between the residuals from Steps #2 and #4; 
-        The result is the partial correlation between X and Y while controlling for the effect of Z
+        5) calculate the correlation coefficient between the residuals from
+            Steps #2 and #4
+        The result is the partial correlation between X and Y while
+            controlling for the effect of Z
 
     Date: Nov 2014
     Author: Fabian Pedregosa-Izquierdo, f@bianp.net
@@ -48,6 +57,8 @@ def partial_corr(C):
     """
 
     C = np.asarray(C)
+    if do_scale is True:
+        C = scale(C, axis=0)
     p = C.shape[1]
     P_corr = np.zeros((p, p), dtype=np.float)
     for i in range(p):
@@ -69,39 +80,20 @@ def partial_corr(C):
     return P_corr
 
 
-def permutation_diff_between(arr_diff, n_perm=1000, return_distribution=False):
-    '''Performs a permutation test for an array of differences.
+def bootstrap_coefficients(x, y, n_boots=1000, fit_intercept=True):
+    """Bootstreap coefficients for a linear model."""
+    # Bootstrap coefficient for slope
+    n_samples, n_features = x.shape
+    if fit_intercept is True:
+        n_features += 1
+        x = np.hstack([x, np.ones([x.shape[0], 1])])
 
-    This randomly flips the differences in arr_diff n_perm times to build a
-    null distribution of mean differences. Then, it compares the empirical
-    mean difference to this distribution.
-
-    Parameters
-    ----------
-    arr_diff : array
-        Point-by-point difference between two arrays (e.g.,
-        from a repeated measures design).
-    n_perm : int
-        The number of permutations to run.
-    return_distribution : bool
-        Whether to return the simulated null distribution
-
-    Returns
-    -------
-    p_val : float
-        The empirical p-value on the simulated null distribution
-    diff_perm : array (optional)
-        The simulated null distribution
-    '''
-    precision = len(str(int(n_perm)))
-    diff_perm = []
-    for _ in range(int(n_perm)):
-        perm_flips = np.random.choice([-1, 1], arr_diff.shape[0])
-        perm_mean = (arr_diff * perm_flips).mean()
-        diff_perm.append(perm_mean)
-    ecdf = ECDF(diff_perm)
-    p_val = 1 - ecdf(arr_diff.mean())
-    if return_distribution:
-        return p_val, diff_perm
-    else:
-        return p_val
+    coefs = np.zeros([n_boots, n_features])
+    for iboot in range(n_boots):
+        ixs = np.random.randint(0, n_samples, n_samples)
+        i_x = x[ixs]
+        i_y = y[ixs]
+        w, res, _, _ = np.linalg.lstsq(i_x, i_y)
+        coefs[iboot] = w.squeeze()
+    coefs = np.array(coefs)
+    return coefs
