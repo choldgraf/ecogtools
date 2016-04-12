@@ -14,7 +14,6 @@ from tqdm import tqdm
 from copy import deepcopy
 
 __all__ = ['svd_clean',
-           'mps',
            'EncodingModel',
            'delay_timeseries']
 
@@ -348,7 +347,7 @@ def svd_clean(arr, svd_num=[0], kind='ix'):
     '''Clean a 2-D array using a Singular Value Decomposition.
 
     Removes singular values according to either an index number that the user
-    provides, or a percentage of variance explained by the singular values. 
+    provides, or a percentage of variance explained by the singular values.
     t then transforms data back into original space and returns an array
     with the same index/columns.
 
@@ -383,70 +382,6 @@ def svd_clean(arr, svd_num=[0], kind='ix'):
     Vh = Vh[svd_num, :]
     clean_arr = np.dot(U, s).dot(Vh)
     return clean_arr
-
-
-def mps(strf, fstep, tstep, half=False):
-    """Calculate the Modulation Power Spectrum of a STRF.
-
-    Parameters
-    ----------
-    strf : array, shape (nfreqs, nlags)
-        The STRF we'll use for MPS calculation.
-    fstep : float
-        The step size of the frequency axis for the STRF
-    tstep : float
-        The step size of the time axis for the STRF.
-    half : bool
-        Return the top half of the MPS (aka, the Positive
-        frequency modulations)
-
-    Returns
-    -------
-    mps_freqs : array
-        The values corresponding to spectral modulations, in cycles / octave
-        or cycles / Hz depending on the units of fstep
-    mps_times : array
-        The values corresponding to temporal modulations, in Hz
-    amps : array
-        The MPS of the input strf
-
-    """
-    # Convert to frequency space and take amplitude
-    nfreqs, nlags = strf.shape
-    fstrf = np.fliplr(strf)
-    mps = np.fft.fftshift(np.fft.fft2(fstrf))
-    amps = np.real(mps * np.conj(mps))
-
-    # Obtain labels for frequency axis
-    mps_freqs = np.zeros([nfreqs])
-    fcircle = 1.0 / fstep
-    for i in range(nfreqs):
-        mps_freqs[i] = (i/float(nfreqs))*fcircle
-        if mps_freqs[i] > fcircle/2.0:
-            mps_freqs[i] -= fcircle
-
-    mps_freqs = np.fft.fftshift(mps_freqs)
-    if mps_freqs[0] > 0.0:
-        mps_freqs[0] = -mps_freqs[0]
-
-    # Obtain labels for time axis
-    fcircle = tstep
-    mps_times = np.zeros([nlags])
-    for i in range(nlags):
-        mps_times[i] = (i/float(nlags))*fcircle
-        if mps_times[i] > fcircle/2.0:
-            mps_times[i] -= fcircle
-
-    mps_times = np.fft.fftshift(mps_times)
-    if mps_times[0] > 0.0:
-        mps_times[0] = -mps_times[0]
-
-    if half:
-        halfi = np.where(mps_freqs == 0.0)[0][0]
-        amps = amps[halfi:, :]
-        mps_freqs = mps_freqs[halfi:]
-
-    return mps_freqs, mps_times, amps
 
 
 def epochs_snr(epochs, n_perm=10, fmin=1, fmax=300, tmin=None, tmax=None,
