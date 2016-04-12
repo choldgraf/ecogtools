@@ -67,7 +67,7 @@ def imps(mps, out_shape=None):
         The inverted spectrogram
     """
     mps = np.fft.ifftshift(mps)
-    spec_i = np.fft.irfft2(mps, s=out_shape)
+    spec_i = np.real(np.fft.irfft2(mps, s=out_shape))
     return spec_i
 
 def filter_mps(mps, mpsfreqs, mpstime, flim, tlim):
@@ -103,8 +103,16 @@ def filter_mps(mps, mpsfreqs, mpstime, flim, tlim):
     msk_freq[use_freqs, :] = True
 
     msk_mps = msk_time * msk_freq
-    print(msk_time.sum(), msk_freq.sum())
-    mps[~msk_mps] = 0
+
+    # Create random phases for the filtered parts
+    msk_remove = ~msk_mps
+    nphase = np.sum(msk_remove)
+    phase_rand = 2 * np.pi * (np.random.rand(nphase) - .5)
+    phase_rand = np.array([np.complex(0, i) for i in phase_rand])
+    phase_rand = np.exp(phase_rand)
+
+    # Now convert the masked values to 0 amplitude and rand phase
+    mps[msk_remove] = 0 * phase_rand
     return mps, msk_mps
 
 
@@ -121,10 +129,12 @@ def invert_real_spectrogram(spec, win_size,
         The spectrogram to be inverted. It should only contain real numbers.
         If you have a complex spectrogram, then this is more easily
         inverted with `invert_spectrogram`.
-    sample_rate : float
-        The sampling frequency of the output waveform
-    spec_sample_rate : float
-        The sampling frequency of the spectrogram
+    win_size : float
+        The size of the windowing function to convert back to time
+    out_length : int
+        The desired length of the output sound
+    tstep : int
+        The step between windows, in samples
 
     Returns
     -------
@@ -135,7 +145,8 @@ def invert_real_spectrogram(spec, win_size,
         The spectrogram from the last iteration of the algorithm.
     """
     # Initial inverted estimation
-    isnd = mne.time_frequency.istft(spec, tstep=win_size / 2, Tx=out_length)
+    tstep = win_size / 2 if tstep is None else tstep
+    isnd = mne.time_frequency.istft(spec, tstep=tstep, Tx=out_length)
 
     for i in range(n_iter):
         # Calculate the spectrogram of the estimate
@@ -150,5 +161,5 @@ def invert_real_spectrogram(spec, win_size,
         # Take the angle for our estimated spectrogram and update before repeat
         spec_angle = np.angle(spec_est)
         spec_updated = spec * np.exp(1j*spec_angle)
-        isnd = mne.time_frequency.istft(spec_updated, tstep=win_size / 2, Tx=out_length)
+        isnd = mne.time_frequency.istft(spec_updated, tstep=tstep, Tx=out_length)
     return isnd, spec_updated
