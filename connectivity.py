@@ -27,8 +27,10 @@ def phase_amplitude_coupling(inst, f_phase, f_amp, ixs, pac_func='ozkurt',
         The data used to calculate PAC
     f_phase : array, dtype float, shape (2,)
         The frequency range to use for low-frequency phase carrier.
-    f_amp : array, dtype float, shape (2,)
+    f_amp : array, dtype float, shape (n_amp_freqs,)
         The frequency range to use for high-frequency amplitude modulation.
+        The signal will be bandpass filtered in pairs, so the minimum size
+        must be 2 (for a single bandpass filter).
     ixs : array-like, shape (n_pairs x 2)
         The indices for low/high frequency channels. PAC will be estimated
         between n_pairs of channels. Indices correspond to rows of `data`.
@@ -196,19 +198,23 @@ def _phase_amplitude_coupling(data, sfreq, f_phase, f_amp, ixs,
         raise ValueError("PAC function {0} is not supported".format(pac_func))
     func = getattr(ppac, pac_func)
     ixs = np.array(ixs, ndmin=2)
+    f_phase = np.atleast_2d(f_phase)
+    f_amp = np.atleast_2d(f_amp)
 
     if data.ndim != 2:
         raise ValueError('Data must be shape (n_channels, n_times)')
     if ixs.shape[1] != 2:
         raise ValueError('Indices must have have a 2nd dimension of length 2')
-    if len(f_phase) != 2 or len(f_amp) != 2:
-        raise ValueError('Frequencies must be specified w/ a low/hi tuple')
+    for ifreqs in [f_phase, f_amp]:
+        if ifreqs.ndim > 2:
+            raise ValueError('frequencies must be of shape (n_freq, 2)')
+        if ifreqs.shape[1] != 2:
+            raise ValueError('Phase frequencies must be of length 2')
 
     print('Pre-filtering data and extracting phase/amplitude...')
     hi_phase = pac_func in _hi_phase_funcs
     data_ph, data_am, ix_map_ph, ix_map_am = _pre_filter_ph_am(
-        data, sfreq, ixs, f_phase, f_amp, npad=npad, hi_phase=hi_phase,
-        scale_amp_func=scale_amp_func)
+        data, sfreq, ixs, f_phase, f_amp, npad=npad, hi_phase=hi_phase)
     ixs_new = [(ix_map_ph[i], ix_map_am[j]) for i, j in ixs]
 
     if ev is not None:
@@ -237,7 +243,14 @@ def _phase_amplitude_coupling(data, sfreq, f_phase, f_amp, ixs,
                                     for i in [data_am, data_ph]])
             data_am, data_ph = zip(*concat_data)
     else:
-        data_ph, data_am = [data_ph], [data_am]
+        data_ph = np.array([data_ph])
+        data_am = np.array([data_am])
+    data_ph = list(data_ph)
+    data_am = list(data_am)
+
+    if scale_amp_func is not None:
+        for i in range(len(data_am)):
+            data_am[i] = scale_amp_func(data_am[i], axis=-1)
 
     n_ep = len(data_ph)
     pac = np.zeros([n_ep, len(ixs_new)])
@@ -255,14 +268,16 @@ def _phase_amplitude_coupling(data, sfreq, f_phase, f_amp, ixs,
 
 
 def _pre_filter_ph_am(data, sfreq, ixs, f_ph, f_am, filterfn=None,
-                      npad=None, hi_phase=False, scale_amp_func=None,
-                      kws_filt=None):
+                      npad=None, hi_phase=False, kws_filt=None):
     """Filter for phase/amp only once for each channel."""
     from pacpy.pac import _range_sanity
     from scipy.signal import hilbert
     filterfn = band_pass_filter if filterfn is None else filterfn
     kws_filt = dict() if kws_filt is None else kws_filt
-    _range_sanity(f_ph, f_am)
+    f_ph = f_ph[0]  # Not supporting multiple phase freqs for now
+
+    for i_f_am in f_am:
+        _range_sanity(f_ph, i_f_am)
     ix_ph = np.atleast_1d(np.unique(ixs[:, 0]))
     ix_am = np.atleast_1d(np.unique(ixs[:, 1]))
 
@@ -274,22 +289,26 @@ def _pre_filter_ph_am(data, sfreq, ixs, f_ph, f_am, filterfn=None,
     elif not isinstance(npad, int):
         raise ValueError('npad must be "auto" or a positive integer')
 
+    # Phase calculation
     data_ph = np.hstack([data[ix_ph, :], np.zeros([len(ix_ph), npad])])
     data_ph = filterfn(data_ph, sfreq, *f_ph, **kws_filt)
     data_ph = np.angle(hilbert(data_ph))[..., :n_times]
     ix_map_ph = {ix: i for i, ix in enumerate(ix_ph)}
 
-    data_am = np.hstack([data[ix_am], np.zeros([len(ix_am), npad])])
-    data_am = filterfn(data_am, sfreq, *f_am, **kws_filt)
-    data_am = np.abs(hilbert(data_am))
+    # Extract amplitude frequencies (averaging bands if necessary)
+    data_am = np.zeros([len(ix_am), npad + data.shape[-1]])
+    for i, fband in enumerate(f_am):
+        i_data_am = np.hstack([data[ix_am], np.zeros([len(ix_am), npad])])
+        i_data_am = filterfn(i_data_am, sfreq, *fband, **kws_filt)
+        i_data_am = np.abs(hilbert(i_data_am))
+        data_am += i_data_am
+    data_am /= f_am.shape[0]
+
     if hi_phase is True:
         data_am = filterfn(data_am, sfreq, *f_ph, **kws_filt)
         data_am = np.angle(hilbert(data_am))
     data_am = data_am[..., :n_times]
     ix_map_am = {ix: i for i, ix in enumerate(ix_am)}
-
-    if scale_amp_func is not None:
-        data_am = scale_amp_func(data_am, axis=-1)
     return data_ph, data_am, ix_map_ph, ix_map_am
 
 
