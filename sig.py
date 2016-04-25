@@ -217,10 +217,25 @@ def coh_to_bits(coh):
     return -np.log2(1-coh)
 
 
-def remove_1_over_f(psd):
-    """Fit a line with robust regression and return the residuals."""
+def remove_1_over_f(psd, freqs=None):
+    """Fit a line with robust regression and return the residuals.
+
+    Parameters
+    ----------
+    psd : array, shape (n_frequencies,)
+        The array of PSDs to fit a regression to. Should be log power so that
+        a linear model is a proper fit.
+    freqs : array, shape (n_frequencies,)
+        The frequencies corresponding to each item in psd. If None, a linear
+        array of len(psd) will be created
+
+    Returns
+    -------
+    psd_resid : array, shape (n_frequencies,)
+        The residuals after subtracting a linear model fit on the log PSD.
+    """
     n_x = psd.shape[0]
-    X = np.arange(n_x)
+    X = np.arange(n_x) if freqs is None else freqs
     mod = sm.RLM(psd, sm.add_constant(X)).fit()
     iint, icoef = mod.params
     psd_resid = psd - (icoef * X + iint)
