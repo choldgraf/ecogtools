@@ -150,3 +150,38 @@ def decimate_by_binning(data, data_names, n_decim):
     data_names = np.array([int(data_names[bins == i].mean())
                            for i in np.unique(bins)])
     return data, data_names
+
+
+def zscore_by_non_events(data, times, events, with_mean=True, with_std=True):
+    """z-score data excluding timepoints contained in events
+
+    Parameters
+    ----------
+    data : array, shape (..., n_times)
+        The data to z-score, generally of shape (n_signals, n_times)
+    times : array, shape (n_times,)
+        The times in data
+    events : array, shape (n_events, 2)
+        The start/stop times (in seconds) of events
+    with_mean : bool
+        Whether to subtract the mean of non-event times
+    with_std : bool
+        Whether to divide by standard deviation of non-event times
+
+    Returns
+    -------
+    data : array, shape == data.shape
+        The data after z-scoring
+    """
+    msk_events = [mne.utils._time_mask(times, istt, istp)
+                  for istt, istp in events]
+    msk_events = np.vstack(msk_events).any(0)
+    msk_non_events = ~msk_events
+    if with_mean:
+        imn = data[..., msk_non_events].mean(-1)
+        data = data - imn[:, np.newaxis]
+
+    if with_std:
+        istd = data[..., msk_non_events].std(-1)
+        data = data / istd[:, np.newaxis]
+    return data
