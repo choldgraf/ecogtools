@@ -12,7 +12,8 @@ from matplotlib.colors import LinearSegmentedColormap
 from sklearn.preprocessing import MinMaxScaler
 
 __all__ = ['split_plot_by_color', 'add_rotated_axis', 'AnimatedScatter',
-           'plot_activity_on_brain', 'diverging_palette_from_hex']
+           'plot_activity_on_brain', 'diverging_palette_from_hex',
+           'plot_split_circles']
 
 
 def diverging_palette_from_hex(h1, h2, as_cmap=True):
@@ -234,7 +235,7 @@ def plot_activity_on_brain(x, y, act, im, smin=10, smax=100, vmin=None,
     # Define colors + sizes
     act_norm = (act - vmin) / float(vmax - vmin)
     colors = cmap(act_norm)
-    sizes = np.clip(np.abs(act) / vmax, 0, 1)  # Normalize to b/w 0 and 1
+    sizes = np.clip(np.abs(act) / float(vmax), 0, 1)  # Normalize to b/w 0 and 1
     sizes = MinMaxScaler((smin, smax)).fit_transform(sizes[:, np.newaxis])
 
     # Plotting
@@ -449,3 +450,58 @@ def plot_phase_binned_amplitude(epochs, freqs_phase, freqs_amp,
         return ax, amps, bins
     else:
         return ax
+
+
+def plot_split_circles(centers, radius, n_wedges=2, angle=0, ax=None,
+                       colors=None, scale_by_ax=True, **kwargs):
+    """
+    Plot a circle at the specified location that is split into sub-colors.
+
+    Parameters
+    ----------
+    centers : array, shape (n_circles, 2)
+        The x/y coordinate of the circle centers
+    radius : float | int
+        The radius of the circle. If scale_by_ax is True, must be b/w 0 and 1
+    n_wedges : int
+        The number of wedges in the circle
+    angle : float
+        The rotation angle in degrees
+    ax : None | mpl axis
+        The axis object to plot on. If None, a new axis is created.
+    colors : list, length == n_wedges | None
+        The colors for each wedge
+    scale_by_ax : bool
+        Whether to treat `radius` as raw data units, or as a fraction of the
+        figure x-axis (in which case radius must be between 0 and 1)
+    kwargs : dictionary
+        To be passed to the mpl Wedge call.
+
+    Returns
+    -------
+    wedges : list
+        A lit of mpl Wedge objects correspond to each wedge in the circle
+    """
+    from matplotlib.patches import Wedge
+    if ax is None:
+        f, ax = plt.subplots()
+    if colors is None:
+        colors = plt.cm.rainbow(np.arange(n_wedges) / float(n_wedges))
+    if scale_by_ax is True:
+        radius = radius * (ax.get_xlim()[1] - ax.get_xlim()[0])
+    radii = radius
+    if isinstance(radii, (int, float)):
+        radii = np.repeat(radii, centers.shape[0])
+
+    arc = 360. / n_wedges
+
+    # Do the plotting
+    wedges = []
+    for ixy, iradius in zip(centers, radii):
+        for icolor in colors:
+            wedges.append(Wedge(ixy, iradius, angle, angle + arc,
+                                fc=icolor, **kwargs))
+            angle = angle + arc
+    for iwedge in wedges:
+        ax.add_artist(iwedge)
+    return wedges
