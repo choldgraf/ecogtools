@@ -1,12 +1,19 @@
 """Testing the STRF code."""
-from ecogtools.strf import EncodingModel, delay_timeseries
+from ecogtools.strf import EncodingModel, delay_timeseries, snr_epochs
 import numpy as np
 from sklearn.cross_validation import KFold, LabelShuffleSplit, LeavePLabelOut
 from sklearn.linear_model import Ridge
 from mne.utils import _time_mask
+import mne
+import ecogtools as et
+import os.path as op
 
 from numpy.testing import assert_array_almost_equal
 from nose.tools import assert_true, assert_raises, assert_equal
+
+base_dir = op.join(op.dirname(mne.__file__), 'io', 'tests', 'data')
+raw_fname = op.join(base_dir, 'test_raw.fif')
+rng = np.random.RandomState(42)
 
 
 def test_encodingmodel():
@@ -28,8 +35,8 @@ def test_encodingmodel():
     kws_fit = dict(times=times, tmin=tmin_fit, tmax=tmax_fit)
     msk_time = _time_mask(times, tmin_fit, tmax_fit)
 
-    weights = 10 * np.random.randn(n_channels * len(delays))
-    X = np.random.randn(n_epochs, n_channels, n_time * sfreq)
+    weights = 10 * rng.randn(n_channels * len(delays))
+    X = rng.randn(n_epochs, n_channels, n_time * sfreq)
     y = np.stack([np.dot(weights, delay_timeseries(xep, sfreq, delays))
                   for xep in X])
 
@@ -91,3 +98,41 @@ def test_encodingmodel():
 
     # Loosening the weight requirement because less data
     assert_array_almost_equal(weights, enc.coefs_, decimal=1)
+
+
+def test_snr():
+    """Test trial to trial coherence"""
+    raw = mne.io.Raw(raw_fname)
+    sfreq = int(raw.info['sfreq'])
+    data, times = raw[0, :5 * sfreq]
+
+    # Create fake epochs from copies of the raw + noise
+    n_epochs = 40
+    noise_amp = .01 * data.max()
+    data = np.tile(data, [n_epochs, 1, 1])
+    data += noise_amp * rng.randn(*data.shape)
+    info = mne.create_info(['ch1'], raw.info['sfreq'], 'eeg')
+    ev = np.vstack([np.arange(n_epochs),
+                    np.zeros(n_epochs),
+                    np.ones(n_epochs)]).T.astype(int)
+    epochs = mne.epochs.EpochsArray(data, info, ev)
+
+    # Test CC
+    cc = snr_epochs(epochs, kind='corr')
+    assert_true((cc > .99).all())
+
+    # Test coherence
+    coh, freqs = snr_epochs(epochs, fmin=2, kind='coh')
+    assert_true((coh.mean(-1) > .99).all())
+
+    # Test random signal
+    data_rand = 10*rng.randn(*data.shape)
+    epochs_rand = mne.epochs.EpochsArray(data_rand, info, ev)
+    cc = snr_epochs(epochs_rand, kind='corr')
+    assert_true(cc.mean() < .02)
+
+    # Test incorrect inputs
+    assert_raises(ValueError, snr_epochs, epochs, kind='foo')
+
+if __name__ == '__main__':
+    test_snr()
