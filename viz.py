@@ -13,7 +13,7 @@ from sklearn.preprocessing import MinMaxScaler
 
 __all__ = ['split_plot_by_color', 'add_rotated_axis', 'AnimatedScatter',
            'plot_activity_on_brain', 'diverging_palette_from_hex',
-           'plot_split_circles']
+           'plot_split_circles', 'set_axis_font']
 
 
 def diverging_palette_from_hex(h1, h2, as_cmap=True):
@@ -505,3 +505,11 @@ def plot_split_circles(centers, radius, n_wedges=2, angle=0, ax=None,
     for iwedge in wedges:
         ax.add_artist(iwedge)
     return wedges
+
+
+def set_axis_font(axs, fontproperties):
+    """Set the font of text in an axis using a fontproperties object."""
+    axs = np.atleast_1d(axs)
+    for ax in axs.ravel():
+        props = ax.get_xticklabels() + ax.get_yticklabels() + [ax.title, ax.xaxis.label, ax.yaxis.label]
+        _ = plt.setp(props, fontproperties=fontproperties)

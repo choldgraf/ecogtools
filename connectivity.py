@@ -338,9 +338,9 @@ def _array_raw_to_epochs(x, sfreq, ev, tmin, tmax):
 
     # Check that events won't be cut off
     n_times = x.shape[-1]
-    min_ix = 0 - sfreq * tmin
-    max_ix = n_times - sfreq * tmax
-    msk_keep = np.logical_and(ev > min_ix, ev < max_ix)
+    ix_data_lim_min = 0 + sfreq * tmin
+    ix_data_lim_max = n_times - sfreq * tmax
+    msk_keep = np.logical_and(ev > ix_data_lim_min, ev < ix_data_lim_max)
 
     if not all(msk_keep):
         print('Some events will be cut off!')
