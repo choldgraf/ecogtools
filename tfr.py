@@ -241,8 +241,8 @@ def tfr_epochs(epoch, freqs_tfr, n_decim=10, n_cycles=5):
     return etfr
 
 
-def extract_amplitude(inst, freqs, normalize=False, new_len=None,
-                      picks=None, copy=True, n_jobs=1, ):
+def extract_amplitude(inst, freqs, n_cycles=7, normalize=False, n_hilbert=None,
+                      picks=None, n_jobs=1, ):
     """Extract the time-varying amplitude for a frequency band.
 
     If multiple freqs are given, the amplitude is calculated at each frequency
@@ -256,13 +256,17 @@ def extract_amplitude(inst, freqs, normalize=False, new_len=None,
         The frequencies to use. If multiple frequency bands given, amplitude
         will be extracted at each and then averaged between frequencies. The
         structure of each band is fmin, fmax.
+    n_cycles : int
+        The number of cycles to include in the filter length for the hilbert
+        transform.
     normalize : bool
         Whether to normalize each frequency amplitude by its mean before
         averaging. This can be helpful if some frequencies have a much higher
         base amplitude than others.
-    new_len : int | None
+    n_hilbert : int | 'auto' | None
         The length of data to use in the Hilbert transform. The data will be
-        cut to last dimension of this size.
+        cut to last dimension of this size. If 'auto', the length equal to the
+        next highest power of two will be used.
     picks : array | None
         The channels to use for extraction
 
@@ -274,20 +278,24 @@ def extract_amplitude(inst, freqs, normalize=False, new_len=None,
     """
 
     # Data checks
-    new_len = inst.n_times if new_len is None else new_len
+    n_hilbert = inst.n_times if n_hilbert is None else n_hilbert
+    if n_hilbert == 'auto':
+        n_hilbert = int(2 ** np.ceil(np.log2(inst.n_times)))
+    n_hilbert = int(n_hilbert)
     freqs = np.atleast_2d(freqs)
     if freqs.shape[-1] != 2:
         raise ValueError('freqs must be shape (n_fbands, 2)')
     picks = range(len(inst.ch_names)) if picks is None else picks
 
-    # Filter for HG and extract amplitude
+    # Filter for HFB and extract amplitude
     bands = np.zeros([freqs.shape[0], len(inst.ch_names), inst.n_times])
     for i, (fmin, fmax) in enumerate(freqs):
+        length_filt = int(np.floor(n_cycles * sfreq / fmin))
         # Extract a range of frequency bands for averaging later
         inst_band = inst.copy()
-        inst_band.filter(fmin, fmax, n_jobs=n_jobs)
+        inst_band.filter(fmin, fmax, filter_length=length_filt, n_jobs=n_jobs)
         inst_band.apply_hilbert(picks, envelope=True,
-                                n_jobs=n_jobs, n_fft=new_len)
+                                n_jobs=n_jobs, n_fft=n_hilbert)
 
         if normalize is True:
             # Scale frequency band so that the ratios of all are the same
@@ -296,7 +304,5 @@ def extract_amplitude(inst, freqs, normalize=False, new_len=None,
         bands[i] = inst_band._data.copy()
 
     # Average across fbands
-    if copy is True:
-        inst = inst.copy()
     inst._data[picks, :] = bands.mean(0)
     return inst
