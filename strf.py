@@ -7,8 +7,8 @@ from sklearn.metrics import mean_squared_error
 from sklearn.pipeline import Pipeline
 from mne.utils import _time_mask
 from mne.connectivity import spectral_connectivity
-from scipy.signal import fftconvolve
 from scipy.stats import pearsonr
+import pandas as pd
 from .utils import embed
 from tqdm import tqdm
 from copy import deepcopy
@@ -57,7 +57,7 @@ class EncodingModel(object):
         self.preproc_y = preproc_y
 
     def fit(self, X, y, sfreq, times=None, tmin=None, tmax=None, cv=None,
-            preproc_y=False, cv_params=None, feat_names=None, verbose=False):
+            cv_params=None, feat_names=None, verbose=False):
         """Fit the model.
 
         Fits a receptive field model. Model results are stored as attributes.
@@ -143,8 +143,8 @@ class EncodingModel(object):
         for i, (tr, tt) in enumerate(cv):
             X_tr = X[:, tr].T
             X_tt = X[:, tt].T
-            y_tr = y[tr]
-            y_tt = y[tt]
+            y_tr = y[tr, np.newaxis]
+            y_tt = y[tt, np.newaxis]
 
             if self.preproc_y:
                 y_tr, y_tt = [self.est._pre_transform(i)[0] for i in [y_tr, y_tt]]
