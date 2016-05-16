@@ -1,5 +1,6 @@
 import numpy as np
 import mne
+import scipy
 
 def mps(strf, fstep, tstep, return_top_half=False, return_amp=True):
     """Calculate the Modulation Power Spectrum of a STRF.
@@ -96,28 +97,29 @@ def filter_mps(mps, mpsfreqs, mpstime, flim, tlim):
     mps = mps.copy()
     msk_freq, msk_time = [np.zeros_like(mps, dtype=bool)
                       for _ in range(2)]
+    # Mask for time axis
     use_times = mne.utils._time_mask(mpstime, *tlim)
     msk_time[:, use_times] = True
-
+    # Mask for freq axis
     use_freqs = mne.utils._time_mask(mpsfreqs, *flim)
     msk_freq[use_freqs, :] = True
-
+    # Combine masks for joint
     msk_mps = msk_time * msk_freq
+    msk_remove = ~msk_mps
 
     # Create random phases for the filtered parts
-    msk_remove = ~msk_mps
     nphase = np.sum(msk_remove)
     phase_rand = 2 * np.pi * (np.random.rand(nphase) - .5)
     phase_rand = np.array([np.complex(0, i) for i in phase_rand])
     phase_rand = np.exp(phase_rand)
 
     # Now convert the masked values to 0 amplitude and rand phase
-    mps[msk_remove] = 0 * phase_rand
+    mps[msk_remove] = 0. * phase_rand
     return mps, msk_mps
 
 
-def invert_real_spectrogram(spec, win_size,
-                            n_iter=20, out_length=None, tstep=None):
+def invert_real_spectrogram(spec, win_size, max_iter=20, error_stop=.1,
+                            out_length=None, tstep=None):
     """Invert a real-valued spectrogram.
 
     Uses the griffith/lim algorithm, a method for iteratively building a 1-d
@@ -131,6 +133,10 @@ def invert_real_spectrogram(spec, win_size,
         inverted with `invert_spectrogram`.
     win_size : float
         The size of the windowing function to convert back to time
+    max_iter : int
+        The maximum number of iterations to run
+    error_stop : float between (0, 1)
+        If the error (as a fraction between 1) drops below this, stop.
     out_length : int
         The desired length of the output sound
     tstep : int
@@ -146,9 +152,9 @@ def invert_real_spectrogram(spec, win_size,
     """
     # Initial inverted estimation
     tstep = win_size / 2 if tstep is None else tstep
-    isnd = mne.time_frequency.istft(spec, tstep=tstep, Tx=out_length)
+    isnd = np.real(mne.time_frequency.istft(spec, tstep=tstep, Tx=out_length))
 
-    for i in range(n_iter):
+    for i in range(max_iter):
         # Calculate the spectrogram of the estimate
         spec_est = mne.time_frequency.stft(isnd, win_size, tstep=tstep)
 
@@ -161,5 +167,8 @@ def invert_real_spectrogram(spec, win_size,
         # Take the angle for our estimated spectrogram and update before repeat
         spec_angle = np.angle(spec_est)
         spec_updated = spec * np.exp(1j*spec_angle)
-        isnd = mne.time_frequency.istft(spec_updated, tstep=tstep, Tx=out_length)
+        isnd = np.real(mne.time_frequency.istft(spec_updated, tstep=tstep, Tx=out_length))
+        if error < error_stop:
+            break
+    print("Finished after {0} iterations with error: {1}".format(i, error))
     return isnd, spec_updated
