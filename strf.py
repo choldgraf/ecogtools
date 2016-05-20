@@ -49,6 +49,15 @@ class EncodingModel(object):
         preproc_y : bool
             Whether to apply the preprocessing steps of the estimator used in
             fitting on the predictor variables prior to model fitting.
+
+        References
+        ----------
+        [1] Theunissen, F. E. et al. Estimating spatio-temporal receptive
+                fields of auditory and visual neurons from their responses to
+                natural stimuli. Network 12, 289–316 (2001).
+        [2] Willmore, B. & Smyth, D. Methods for first-order kernel estimation:
+                simple-cell receptive fields from responses to natural scenes.
+                Network 14, 553–77 (2003).
         """
         self.delays = np.array([0]) if delays is None else delays
         self.n_delays = len(self.delays)
