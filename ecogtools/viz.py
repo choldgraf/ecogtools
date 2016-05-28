@@ -11,6 +11,7 @@ from matplotlib.patches import Rectangle
 from matplotlib.colors import LinearSegmentedColormap
 from sklearn.preprocessing import MinMaxScaler
 
+
 __all__ = ['split_plot_by_color', 'add_rotated_axis', 'AnimatedScatter',
            'plot_activity_on_brain', 'diverging_palette_from_hex',
            'plot_split_circles', 'set_axis_font']
@@ -511,5 +512,16 @@ def set_axis_font(axs, fontproperties):
     """Set the font of text in an axis using a fontproperties object."""
     axs = np.atleast_1d(axs)
     for ax in axs.ravel():
-        props = ax.get_xticklabels() + ax.get_yticklabels() + [ax.title, ax.xaxis.label, ax.yaxis.label]
+        props = (ax.get_xticklabels() + ax.get_yticklabels() +
+                 [ax.title, ax.xaxis.label, ax.yaxis.label])
         _ = plt.setp(props, fontproperties=fontproperties)
+
+
+def array_to_plotly(arr, with_alpha=False):
+    """Convert a matplotlib color array to plotly strings."""
+    if with_alpha is True:
+        return np.array(['rgba(%s, %s, %s, %s)' % (r, g, b, a)
+                         for r, g, b, a in arr])
+    else:
+        return np.array(['rgb(%s, %s, %s)' % (r, g, b) for r, g, b, _ in arr])
+

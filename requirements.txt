@@ -12,3 +12,4 @@ statsmodels
 IPython
 seaborn
 tqdm
+plotly
