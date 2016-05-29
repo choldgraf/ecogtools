@@ -4,11 +4,24 @@ import numpy as np
 from plotly.tools import FigureFactory as ff
 from plotly import graph_objs as go
 from plotly import offline as offl
+from copy import deepcopy
 from .viz import array_to_plotly
 
 
 class ActivitySurfacePlot(object):
     """Plot brain activity using a brain surface using plotly.
+
+    Parameters
+    ----------
+    colormap : matplotlib colormap
+        The colormap for the brain surface.
+    eye : array, shape (3,)
+        The xyz coordinates of the starting camera position.
+    zoom : float | int, must be > 0
+        The zooming factor. Larger values are more zoomed in. Values < 1
+        correspond to zooming in.
+    init_notebook : bool
+        Whether to initialize plotly interactive notebook mode.
 
     Attributes
     ----------
@@ -17,8 +30,13 @@ class ActivitySurfacePlot(object):
     scatterdata : plotly Scatter3d object | None
         The data returned by calling Scatter3d in plotly.
     """
-    def __init__(self, colormap=None, eye=None, init_notebook=True):
-        self.eye = dict(x=1.25, y=1.25, z=1.25) if eye is None else eye
+    def __init__(self, colormap=None, eye=None, zoom=1, init_notebook=True):
+        if eye is None:
+            self.eye = dict(x=1.25, y=1.25, z=1.25)
+        else:
+            self.eye = deepcopy(eye)
+        for key, val in self.eye.items():
+            self.eye[key] = val / float(zoom)
         self.camera = dict(eye=self.eye)
         self.layout = dict(scene=dict(camera=self.camera))
         self.cmap = plt.cm.Greys if colormap is None else colormap
@@ -98,7 +116,8 @@ class ActivitySurfacePlot(object):
         # Iterate through centroids and calculate scalings
         act_all = np.zeros([self.triangles.shape[0]])
         for ix, act in zip(ixs_triangles, activity):
-            dist_from_activity = self.tri_centroids - self.xyz[ix]
+            act_centroid = self.xyz[self.triangles[ix]].mean(0)
+            dist_from_activity = self.tri_centroids - act_centroid
             dist_from_activity = np.sqrt((dist_from_activity ** 2).sum(1))
             dist_clip = 1 - np.clip(dist_from_activity, 0, spread) / spread
             act_all += dist_clip
@@ -128,7 +147,9 @@ class ActivitySurfacePlot(object):
         xyz = np.atleast_1d(xyz)
         if xyz.ndim == 1 or xyz.shape[-1] == 1:
             # Assume values are triangle indices
-            xyz = self.xyz[xyz]
+            xyz = self.xyz[self.triangles[xyz]]
+            # Take the average over the 3 points in the triangle
+            xyz = xyz.mean(1)
         if xyz.shape[-1] != 3:
             raise ValueError('xyz must be shape (n_points, 3) if'
                              ' not triangle ixs')
@@ -171,8 +192,29 @@ class ActivitySurfacePlot(object):
 
             # Now update the ranges if they've changed
             this_axis = self.layout['scene']['%saxis' % key]
-            this_axis['range'] = [np.min([this_axis['range'], pts]),
-                                  np.max([this_axis['range'], pts])]
+            this_axis['range'] = [np.min(np.hstack([this_axis['range'], pts])),
+                                  np.max(np.hstack([this_axis['range'], pts]))]
+
+    def find_nearest_triangles(self, xyz):
+        """Find nearest surface triangle to a set of xyz positions.
+
+        Parameters
+        ----------
+        xyz : array, shape (n_points, 3)
+            The xyz positions you wish to map onto trinagles
+
+        Returns
+        -------
+        ixs : shape (n_points,)
+            Indices corresponding to the nearest triangle for each xyz.
+        """
+        xyz = np.asarray(xyz)
+        ixs = np.zeros(xyz.shape[0])
+        for ii, pt in enumerate(xyz):
+            dists = self.tri_centroids - pt
+            dists = (dists ** 2).sum(-1)
+            ixs[ii] = np.argmin(dists)
+        return ixs.astype(int)
 
     def plot(self, surface=True, scatter=True,
              interactive=True, filename=None):
