@@ -1,5 +1,6 @@
 """Helpers for the filtered speech project"""
 from .audio import *
+from .colors import *
 from .connectivity import *
 from .cross_validation import *
 from .mneutils import *

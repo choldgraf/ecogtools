@@ -13,3 +13,4 @@ IPython
 seaborn
 tqdm
 plotly
+colorlover
