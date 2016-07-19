@@ -10,6 +10,8 @@ from matplotlib.collections import PathCollection
 from matplotlib.patches import Rectangle
 from matplotlib.colors import LinearSegmentedColormap
 from sklearn.preprocessing import MinMaxScaler
+import seaborn as sns
+sns.set_style('white')
 
 
 __all__ = ['split_plot_by_color', 'add_rotated_axis', 'AnimatedScatter',
@@ -525,3 +527,88 @@ def array_to_plotly(arr, with_alpha=False):
     else:
         return np.array(['rgb(%s, %s, %s)' % (r, g, b) for r, g, b, _ in arr])
 
+
+def layout_to_xy(layout, im):
+    """Convert an MNE layout to xy points.
+
+    This can be confusing because the layout plots from the top to bottom (to
+    match the imshow default), while scatterplots go from bottom to top. As
+    such, this function flips the y values, then expands both x and y to fill
+    the size of `im`.
+
+    Parameters
+    ----------
+    layout : instance of mne layout
+        The layout corresponding to electrode locations
+    im : ndarray
+        The image of a brain the electrodes belong to. It should be at least
+        2-D and the first two dimensions are assumed to be the Y / X axis.
+
+    Returns
+    -------
+    xy : array, shape (n_elecs, 2)
+        The xy positions of the electrodes in `layout`.
+    """
+    x, y = layout.pos[:, :2].T
+    # Reverse y
+    y = 1 - y
+    sh_y, sh_x = im.shape[:2]
+    xy = np.vstack([x * sh_x, y * sh_y]).T
+    return xy
+
+
+def plot_equation(eq, fontsize=50, outfile=None, padding=0.1, ax=None):
+    """Plot an equation as a matplotlib figure.
+
+    Parameters
+    ----------
+    eq : string
+        The equation that you wish to plot. Should be plottable with
+        latex. If `$` is included, they will be stripped.
+    fontsize : number
+        The fontsize passed to plt.text()
+    outfile : string
+        Name of the file to save the figure to.
+    padding : float
+        Amount of padding around the equation in inches.
+    ax : matplotlib axis | None
+        The axis for plotting. If None, a new figure will be created.
+        Defaults to None.
+
+    Returns
+    -------
+    ax : matplotlib axis
+        The axis with your equation.
+    """
+    # clean equation string
+    eq = eq.strip('$').replace(' ', '')
+
+    # set up figure
+    if ax is None:
+        f = plt.figure()
+        ax = plt.axes([0, 0, 1, 1])
+    else:
+        f = ax.figure
+    r = f.canvas.get_renderer()
+
+    # display equation
+    t = ax.text(0.5, 0.5, '${}$'.format(eq), fontsize=fontsize,
+                horizontalalignment='center', verticalalignment='center')
+
+    # resize figure to fit equation
+    bb = t.get_window_extent(renderer=r)
+    w = bb.width / f.dpi
+    h = np.ceil(bb.height / f.dpi)
+    f.set_size_inches((padding + w, padding + h))
+
+    # set axis limits so equation is centered
+    _ = plt.setp(ax, xlim=[0, 1], ylim=[0, 1])
+
+    # Remove formatting for axis
+    ax.grid(False)
+    ax.set_axis_off()
+
+    # Save and return
+    if outfile is not None:
+        f.savefig(outfile)
+    return ax
