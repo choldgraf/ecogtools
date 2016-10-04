@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib.transforms import Affine2D
 import mpl_toolkits.axisartist.floating_axes as floating_axes
 from seaborn.palettes import diverging_palette
-from seaborn import husl
+from seaborn.external import husl
 from matplotlib.collections import PathCollection
 from matplotlib.patches import Rectangle
 from matplotlib.colors import LinearSegmentedColormap
