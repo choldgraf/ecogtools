@@ -8,9 +8,10 @@ from copy import deepcopy
 from .viz import array_to_plotly
 from mayavi.core.ui.mayavi_scene import MayaviScene
 from mayavi import mlab
+from surfer import Brain
 
 
-class ActivitySurfacePlot(object):
+class ECoGBrain(Brain):
     """Plot brain activity using a brain surface using plotly.
 
     Parameters
@@ -32,52 +33,82 @@ class ActivitySurfacePlot(object):
     scatterdata : plotly Scatter3d object | None
         The data returned by calling Scatter3d in plotly.
     """
-    def __init__(self, colormap=None, xyz=None, triangles=None, **kwargs):
-        self.cmap = plt.cm.Greys if colormap is None else colormap
-        self.surfacedata = None
-        self.scatterdata = None
-        self.fig = mlab.figure(**kwargs)
+    def convert_points_to_2d(self, xyz):
+        """Project xyz points onto the camera plane so they are 2d.
 
-    def add_surface(self, xyz, triangles, lighting=None, gyri_mask=None):
-        """Add a surface model to the plotly figure.
+        Parameters
+        ----------
+        xyz : array, shape (n_points, 3)
+            The 3d points you wish to convert to 2d. They will be projected
+            onto the current plane of the camera.
 
-        xyz : array, shape (n_vertices, 3)
-            An xyz array defining the position of each vertex in 3-D
-        triangles : array, shape (n_triangles, 3)
-            An ijk array defining triangles for the mesh. Each row
-            indexes 3 rows of in xyz, which together make a triangle.
-        lighting : None | dict
-            A dictionary specifying lighting parameters in plotly
-        gyri_mask : None | array, shape (n_triangles)
-            A boolean array specifying gyri and sulci. If specified, plots
-            will show a different base facecolor for each.
+        Returns
+        -------
+        xy : array, shape (n_points, 2)
+            The xyz points projected onto the current plane of the camera. This
+            can now be plotted as a scatterplot along with the image returned
+            by `self.screenshot`
         """
-        if lighting is None:
-            lighting = dict(ambient=.4, specular=1)
-        if gyri_mask is not None:
-            if gyri_mask.shape[0] != triangles.shape[0]:
-                raise ValueError('Gyri mask must be same length as triangles')
-            if gyri_mask.ndim != 1:
-                raise ValueError('Gyri mask must be 1-D')
-            self.gyri_mask = gyri_mask
-        self.xyz = xyz
-        self.x, self.y, self.z = xyz.T
-        self.triangles = triangles
-        self.activity = np.ones_like(self.x)
+        if len(self.foci.values()) == 0:
+            raise ValueError('Need a 3d scatterplot to convert to 2d')
+        brain = self.brain_matrix[0, 0]
+        xy = convert_3d_to_2d(brain._f, xyz)
+        return xy
 
-        if gyri_mask is not None:
-            colors = np.where(gyri_mask, .4, .6)
-        else:
-            colors = np.repeat(.5, len(xyz))
+    def screenshot(self, with_foci=False, with_colorbar=False,
+                   return_xy_points=True, clean_image=True):
+        """Take a snapshot of the current view.
 
-        self.surfacedata = mlab.triangular_mesh(
-            self.x, self.y, self.z, self.triangles,
-            colormap=self.cmap.name, scalars=colors)
+        Parameters
+        ----------
+        with_focii : bool
+            If False, remove foci before taking the screenshot
+        with_colorbar : bool
+            If False, remove the colorbar before taking the screenshot
+        return_xy_points : bool
+            If True, also return xy values of all foci plotted on the brain for
+            the returned screenshot.
+        clean_image : bool
+            If True, crop and remove the background of the returned image, with
+            xy points scaled accordingly.
 
-        self.tri_centroids = xyz[triangles].mean(1)
+        Returns
+        -------
+        im : ndarray, shape (m, n, 3)
+            An image of the current mayavi view.
+        [xy] : ndarray, shape (n_points, 2)
+            The xy points of all foci on the image.
+        """
+        if with_foci is False:
+            for ifoc in self.foci.values():
+                ifoc.visible = False
+        if with_colorbar is False:
+            self._colorbar_visibility(False, 0, 0)
 
-    def set_activity(self, activity, triangles=None, xyz=None, spread=20,
-                     vmin=None, vmax=None, cmap=None):
+        im = super(type(self), self).screenshot()
+
+        if with_foci is False:
+            for ifoc in self.foci.values():
+                ifoc.visible = True
+        if with_colorbar is False:
+            self._colorbar_visibility(True, 0, 0)
+
+        if clean_image is True and return_xy_points is False:
+            raise ValueError('Need xy points to clean image')
+        if return_xy_points is True:
+            foci = self.foci.values()
+            xyz = np.hstack([(ig.mlab_source.x,
+                              ig.mlab_source.y,
+                              ig.mlab_source.z) for ig in foci]).T
+            xy = self.convert_points_to_2d(xyz)
+
+            if clean_image is True:
+                bg_color = np.mean(self._bg_color)
+                im, xy = crop_and_remove_background(im, xy, bg_color)
+            return im, xy
+        return im
+
+    def add_foci_surface_activity(self, xyz, activity, spread=10, **kwargs):
         """Set activity on the brain according to foci at vertices.
 
         Currently, activity is maximal at specified vertices, and spreads
@@ -86,93 +117,37 @@ class ActivitySurfacePlot(object):
 
         Parameters
         ----------
-        activity : array, shape (n_active_points,) | scalar
-            The max activity level to plot at each center. If scalar, the same
-            activity value is plotted at all points given in triangles or xyz
-        ixs_triangles : array, shape (n_active_points,)
-            The indices of self.triangles corresponding to centers of activity
         xyz : array, shape (n_active_points, 3)
             If ixs_triangles is not given, the xyz coordinates of focii of
             activation.
+        activity : array, shape (n_active_points,) | scalar
+            The max activity level to plot at each center. If scalar, the same
+            activity value is plotted at all points given in triangles or xyz
         spread : int
             The extent to which activity spreads outward from the center. It
             will taper off linearly with distance.
         """
-        if self.surfacedata is None:
-            raise ValueError('Add surface before setting activity')
+        xyz_activity = np.atleast_2d(xyz)
+        xyz_space = np.vstack([val.coords for val in self.geo.values()])
         activity = np.atleast_1d(activity)
-        vmin = activity.min() if vmin is None else vmin
-        vmax = activity.max() if vmax is None else vmax
-        if cmap is None:
-            cmap = 'hot'
-        else:
-            self.cmap = getattr(plt.cm, cmap)
-
-        if triangles is not None:
-            triangles = np.atleast_1d(triangles)
-            activity_centroids = self.tri_centroids[triangles]
-        else:
-            activity_centroids = xyz
-        if len(activity) == 1:
-            activity = np.repeat(activity, len(activity_centroids))
-        if len(activity_centroids) != len(activity):
-            raise ValueError('Activity and ixs length mismatch')
-
-        # Scale activity to 0 and 1
-        activity = (activity - vmin) / float(vmax - vmin)
-        activity = np.clip(activity, 0, 1)
+        if activity.shape[0] == 1:
+            activity = np.repeat(activity, xyz.shape[0])
+        elif activity.shape[0] != xyz.shape[0]:
+            raise ValueError('Activity and focii length mismatch')
 
         # Iterate through centroids and calculate scalings
-        act_all = np.zeros([self.xyz.shape[0]])
-        for act_centroid, act in zip(activity_centroids, activity):
-            dist_from_activity = self.xyz - act_centroid
+        act_all = np.zeros([xyz_space.shape[0]])
+        for act_centroid, act in zip(xyz_activity, activity):
+            # Distance from this centroid to all points in the space
+            dist_from_activity = xyz_space - act_centroid
             dist_from_activity = np.sqrt((dist_from_activity ** 2).sum(1))
+
+            # Now clip the maximum distance it spreads
             dist_clip = 1 - np.clip(dist_from_activity, 0, spread) / spread
             act_all += dist_clip
 
-        # Now constrain act_all to be between 0 and 1 for plotting
-        act_all = np.clip(act_all, 0, 1)
-        self.activity = act_all
-
-        # Remove old surface and plot new
-        self.surfacedata = mlab.triangular_mesh(
-            self.x, self.y, self.z, self.triangles,
-            colormap=self.cmap.name, scalars=act_all)
-
-    def add_scatter_3d(self, xyz):
-        """Add scatterplot data to a surface plot.
-
-        This is mostly useful for seeing where electrodes are located
-        in order to position the camera properly before taking a snapshot.
-
-        Parameters
-        ----------
-        xyz : array, shape (n_points, 3)
-            The xyz coordinates of points in the scatterplot
-        s : array, shape (n_points,) | (1,)
-            The size of each scatterplot.
-        """
-        xyz = np.atleast_1d(xyz)
-        if xyz.ndim == 1 or xyz.shape[-1] == 1:
-            # Assume values are triangle indices
-            xyz = self.xyz[self.triangles[xyz]]
-            # Take the average over the 3 points in the triangle
-            xyz = xyz.mean(1)
-        if xyz.shape[-1] != 3:
-            raise ValueError('xyz must be shape (n_points, 3) if'
-                             ' not triangle ixs')
-        x, y, z = xyz.T
-        self.scatterpts = xyz
-        self.scatterdata = mlab.points3d(x, y, z)
-
-    def convert_to_2d(self, rem_value=None):
-        """Take a snapshot of the current view and return xy points."""
-        xy = convert_3d_to_2d(self.fig, self.scatterpts)
-        img = take_snapshot(scatter=self.scatterdata)
-        img, xy = crop_and_remove_background(img, xy[:, :2],
-                                             rem_value=rem_value)
-
-        return img, xy
+        # Create the overlay
+        self.add_data(act_all, **kwargs)
 
 
 def convert_3d_to_2d(fig, xyz):
@@ -212,44 +187,6 @@ def convert_3d_to_2d(fig, xyz):
         norm_view_coords, view_to_disp_mat)
     xy = xy[:, :2]
     return xy
-
-
-def get_camera_view():
-    """Return the camera view."""
-    az, el, dist, foc = mlab.view()
-    return az, el, dist, foc
-
-
-def set_camera_view(ax, el, dist, foc):
-    """Set the camera view."""
-    mlab.view(az, el, dist, foc)
-
-
-def take_snapshot(scatter=None, fig=None, ):
-    """Return an image of the brain w/o scatterplots.
-
-    Parameters
-    ----------
-    scatter : instance of Mayavi 3d scatterplot
-        The scatterplot object created when calling points3d.
-    fig : instance of Mayavi figure
-        If `scatter` is not given, the figure that the scatterplot
-        is embedded in. The first component of the figure is assumed
-        to be the scatterplot object.
-
-    Returns
-    -------
-    img : array, shape (M, N, 3)
-        An image of the current scene in Mayavi.
-    """
-    if scatter is None:
-        if fig is None:
-            fig = mlab.gcf()
-        scatter = fig.children[-1]
-    scatter.visible = False
-    img = mlab.screenshot()
-    scatter.visible = True
-    return img
 
 
 def crop_and_remove_background(im, xy, rem_value=None):
