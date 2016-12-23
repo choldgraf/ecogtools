@@ -1,4 +1,4 @@
-function [ xy_elecs, im ] = extract_2d_coordinates_from_surface(triangles,vertices,xyz_elec,az,el,camzoom_ratio,angle_light,f_width,f_height)
+function [ xy_elecs, im ] = extract_2d_coordinates_from_surface(triangles,vertices,xyz_elec, opt)
 % Make a surface brain plot and retrieve electrode locations in 2-D
 % coordinates at a specific camera angle. Returns an image of the brain
 % surface at that angle with a red background (so that it can be easily
@@ -13,12 +13,16 @@ function [ xy_elecs, im ] = extract_2d_coordinates_from_surface(triangles,vertic
 % vertices : an M x 3 matrix specifying xyz vertices of the brain surface
 %   (see trisurf for usage)
 % xyz_elec : an M x 3 matrix specifying xyz positions of electrodes
-% az : float, the azimuth of the camera (see `view`)
-% el : float, the elevation of the camera (see `view`)
-% camzoom_ratio : float, the amount to zoom in (1 is no zoom)
-% angle_light : a length 2 vector specifying the angle of light
-% f_width : float, the width of the figure to be created (in pixels)
-% f_height : float, the height of the figure to be created (in pixels)
+%
+% Optional Parameters
+% -------------------
+% Optional parameters should be attached to a single variable called "opt"
+%   az : float, the azimuth of the camera (see `view`)
+%   el : float, the elevation of the camera (see `view`)
+%   camzoom_ratio : float, the amount to zoom in (1 is no zoom)
+%   angle_light : a length 2 vector specifying the angle of light (az + el)
+%   f_width : float, the width of the figure to be created (in pixels)
+%   f_height : float, the height of the figure to be created (in pixels)
 %
 % Returns
 % -------
@@ -26,6 +30,41 @@ function [ xy_elecs, im ] = extract_2d_coordinates_from_surface(triangles,vertic
 %   image
 % im : image matrix, the image corresponding to the view of the brain
 %   surface specified in the parameters.
+
+if (~isfield(opt, 'az'))
+    opt.az = 1;
+end
+
+if (~isfield(opt, 'el'))
+    opt.el = 0;
+end
+
+if (~isfield(opt, 'camzoom_ratio'))
+    opt.camzoom_ratio = 1;
+end
+
+if (~isfield(opt, 'angle_light'))
+    opt.angle_light = [0, 1];
+end
+
+if (~isfield(opt, 'figsize'))
+    opt.figsize = [400, 400];
+end
+
+if (~isfield(opt, 'spin'))
+    opt.spin = 0;
+end
+
+az = opt.az;
+el = opt.el;
+camzoom_ratio = opt.camzoom_ratio;
+angle_light = opt.angle_light;
+f_width = opt.figsize(1);
+f_height = opt.figsize(2);
+spin = opt.spin;
+
+
+% Pull vertex and electrode positions
 vx = vertices(:, 1);
 vy = vertices(:, 2);
 vz = vertices(:, 3);
@@ -37,6 +76,7 @@ ez = xyz_elec(:, 3);
 marker_size = f_width * .05;
 
 figure('Position', [100, 100, f_width, f_height], 'Color', 'None');
+axis vis3d
 hold on;
 colormap gray;
 
@@ -45,6 +85,7 @@ surf = trisurf(triangles, vx, vy, vz, 'EdgeColor','none','LineStyle','none', ...
         'FaceColor', [1, 1, 1], 'FaceLighting', 'gouraud');
 lightangle(angle_light(1), angle_light(2));
 view(az, el);
+camroll(spin);
 camzoom(camzoom_ratio);
 axis off
 

@@ -116,3 +116,35 @@ class Events(object):
             ev_id = {'event_{0}'.format(i): i for i in self.ids}
         events = np.vstack([times, zeros, events]).T.astype(int)
         return events, ev_id
+
+
+def xy_to_layout(xy, image, ch_names=None, flipy=True):
+    """Convert xy coordinates to an MNE layout, normalized by an image
+
+    Parameters
+    ----------
+    xy : array, shape (n_points, 2)
+        xy coordinates of electrodes
+    image : ndarray
+        The image of the brain that xy positions plot on top of
+    ch_names : None | list of strings, length n_points
+        Channel names for each xy point
+    flipy : bool
+        Whether or not to flip the y coordinates of xy points after
+        creating the layout (use if xy points are from the bottom-up,
+        because imshow will plot from the top-down)
+
+    Returns
+    -------
+    lt : instance of MNE layout
+        The layout of these xy positions
+    """
+    if ch_names is None:
+        ch_names = ['%s' % ii for ii in range(xy.shape[0])]
+    lt = mne.channels.generate_2d_layout(xy, bg_image=image,
+                                         ch_names=ch_names)
+
+    if flipy is True:
+        # Flip the y-values so they plot from top to bottom
+        lt.pos[:, 1] = 1 - lt.pos[:, 1]
+    return lt
