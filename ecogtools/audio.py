@@ -1,8 +1,6 @@
 """A collection of functions for auditory processing and analysis."""
 import numpy as np
 import pandas as pd
-from brian import Hz, kHz
-from brian import hears
 from .sig import compress_signal
 
 
@@ -123,6 +121,8 @@ def spectrogram_audio(audio, n_bands=32, sfreq=44100.,
     freqs : array, shape (n_frequencies,)
         The center frequencies for the spectrogram
     '''
+    from brian import hears, Hz
+
     # Auditory filterbank + amplitude extraction
     cfreqs = create_center_frequencies(fmin, fmax, n_bands, kind=freq_spacing)
 
@@ -172,6 +172,7 @@ def spectrogram_nsl(sig, sfreq, cfs, comp_kind='exp', comp_fac=3):
     freqs : array, shape (n_frequencies,)
         The center frequencies for the spectrogram
     '''
+    from brian import hears, Hz
     sfreq = float(sfreq)*Hz
     snd = hears.Sound(sig, samplerate=sfreq)
 
@@ -266,6 +267,7 @@ def create_center_frequencies(stt=180, stp=7000, n_bands=32, kind='log'):
     freqs : array, shape (n_frequencies,)
         An array of center frequencies.
     '''
+    from brian import hears, Hz
     if kind == 'log':
         freqs = np.logspace(np.log10(stt), np.log10(stp), n_bands).astype(int)
     elif kind == 'erb':

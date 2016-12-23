@@ -11,6 +11,9 @@ from matplotlib.patches import Rectangle
 from matplotlib.colors import LinearSegmentedColormap
 from sklearn.preprocessing import MinMaxScaler
 import seaborn as sns
+from moviepy.editor import VideoClip
+from moviepy.video.io.bindings import mplfig_to_npimage
+
 sns.set_style('white')
 
 
@@ -194,7 +197,8 @@ def add_rotated_axis(f, extents=(-1, 1, 0, 1), sc_x=None, sc_y=None,
 
 
 def plot_activity_on_brain(x, y, act, im, smin=10, smax=100, vmin=None,
-                           vmax=None, ax=None, cmap=None, name=None):
+                           vmax=None, ax=None, cmap=None, name=None,
+                           movie_duration=5.):
     """Plot activity as a scatterplot on a brain.
 
     Parameters
@@ -203,7 +207,7 @@ def plot_activity_on_brain(x, y, act, im, smin=10, smax=100, vmin=None,
         The x positions of electrodes
     y : array, shape (n_channels,)
         The y positions of electrodes
-    act : array, shape (n_channels,)
+    act : array, shape (n_channels, [n_times])
         The activity values to plot as size/color on electrodes
     im : ndarray, passed to imshow
         An image of the brain to match with x/y positions
@@ -221,6 +225,9 @@ def plot_activity_on_brain(x, y, act, im, smin=10, smax=100, vmin=None,
         The colormap to plot
     name : string | None
         A string name for the plot title.
+    movie_duration : int | float
+        The duration (in seconds) of the movie created if `act`
+        has two dimensions.
 
     Returns
     -------
@@ -230,21 +237,55 @@ def plot_activity_on_brain(x, y, act, im, smin=10, smax=100, vmin=None,
     # Handle defaults
     if ax is None:
         _, ax = plt.subplots()
+    fig = ax.figure
     if cmap is None:
         cmap = plt.cm.coolwarm
     vmin = act.min() if vmin is None else vmin
     vmax = act.max() if vmax is None else vmax
 
     # Define colors + sizes
+    if act.ndim == 1:
+        act = act[:, np.newaxis]
+        do_movie = False
+    elif act.ndim == 2:
+        do_movie = True
+    else:
+        raise ValueError('`act` must be shape (n_channels, [n_times])')
+    # Normalize to the vmin/vmax so colors are correct
     act_norm = (act - vmin) / float(vmax - vmin)
     colors = cmap(act_norm)
-    sizes = np.clip(np.abs(act) / float(vmax), 0, 1)  # Normalize to b/w 0 and 1
-    sizes = MinMaxScaler((smin, smax)).fit_transform(sizes[:, np.newaxis])
+
+    # For sizes, first make sure our vmin/vmax aren't negative
+    slim_min, slim_max = np.clip(np.abs([vmin, vmax]), 0, None)
+    sizes = (np.abs(act) - slim_min) / (float(slim_max - slim_min))
+    # Now scale up to the sizes specified
+    sizes = act_norm * (smax - smin) + vmin
 
     # Plotting
     ax.imshow(im)
-    ax.scatter(x, y, s=sizes, c=colors, cmap=cmap)
-    ax.set_title(name, fontsize=20)
+    scat = ax.scatter(x, y, s=sizes[:, 0], c=colors[:, 0], cmap=cmap)
+    if name is not None:
+        ax.set_title(name, fontsize=20)
+    ax.set_axis_off()
+
+    # Make it a movie if we wish
+    if do_movie is True:
+        sfreq_movie = act.shape[-1] / movie_duration
+
+        # Function to update the scatterplot
+        def animate_scatterplot(t):
+            ix = int(np.round(t * sfreq_movie))
+            this_sizes = sizes[:, ix]
+            this_colors = colors[:, ix]
+            scat.set_sizes(this_sizes)
+            scat.set_color(this_colors)
+            return mplfig_to_npimage(fig)
+
+        # Now we'll create our videoclip using this function
+        clip = VideoClip(animate_scatterplot, duration=movie_duration)
+        clip.fps = sfreq_movie
+        return clip
+
     return ax
 
 

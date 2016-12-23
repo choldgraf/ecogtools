@@ -5,8 +5,7 @@ scikit-learn
 nibabel
 matplotlib
 pandas
-brian
-mne-python
+mne
 h5py
 statsmodels
 IPython
@@ -14,3 +13,4 @@ seaborn
 tqdm
 plotly
 colorlover
+moviepy
