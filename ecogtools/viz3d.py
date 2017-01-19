@@ -1,11 +1,11 @@
 """Utilities for 3D visualization with plotly"""
 import matplotlib.pyplot as plt
 import numpy as np
-from plotly.tools import FigureFactory as ff
-from plotly import graph_objs as go
-from plotly import offline as offl
-from copy import deepcopy
-from .viz import array_to_plotly
+# from plotly.tools import FigureFactory as ff
+# from plotly import graph_objs as go
+# from plotly import offline as offl
+# from copy import deepcopy
+# from .viz import array_to_plotly
 
 # --- COMMENTED OUT UNTIL I CAN INCORPORATE MNE-PYTHON 3D PLOTTING ---
 # from surfer import Brain
