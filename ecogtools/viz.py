@@ -4,15 +4,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.transforms import Affine2D
 import mpl_toolkits.axisartist.floating_axes as floating_axes
-from seaborn.palettes import diverging_palette
-from seaborn.external import husl
+
 from matplotlib.collections import PathCollection
 from matplotlib.patches import Rectangle
 from matplotlib.colors import LinearSegmentedColormap
-from sklearn.preprocessing import MinMaxScaler
-import seaborn as sns
+
 from moviepy.editor import VideoClip
 from moviepy.video.io.bindings import mplfig_to_npimage
+
+import seaborn as sns
+import colorbabel as cb
 sns.set_style('white')
 
 
@@ -57,7 +58,7 @@ def split_plot_by_color(obj, cutoff=0, cols=None, clim=None, slim=None,
     if isinstance(cols, (list, tuple)):
         if not all([isinstance(i, (str)) for i in cols]):
             raise ValueError('Cols must be list of hex codes if not colormap')
-        pal = diverging_palette_from_hex(*cols, as_cmap=True)
+        pal = cb.ColorTranslator(cols).to_diverging()
     elif isinstance(cols, LinearSegmentedColormap):
         pal = cols
     else:
@@ -241,15 +242,19 @@ def plot_activity_on_brain(x, y, act, im, smin=10, smax=100, vmin=None,
         do_movie = True
     else:
         raise ValueError('`act` must be shape (n_channels, [n_times])')
-    # Normalize to the vmin/vmax so colors are correct
+
+    # Normalize colors to the vmin/vmax so colors are correct
     act_norm = (act - vmin) / float(vmax - vmin)
     colors = cmap(act_norm)
 
-    # For sizes, first make sure our vmin/vmax aren't negative
-    slim_min, slim_max = np.clip(np.abs([vmin, vmax]), 0, None)
-    sizes = (np.abs(act) - slim_min) / (float(slim_max - slim_min))
+    # For size, scale normalized activity to between -1 and 1
+    sizes = (act_norm * 2) - 1
+
+    # Now take absolute value so 0 is the midpoint
+    sizes = np.abs(sizes)
+
     # Now scale up to the sizes specified
-    sizes = act_norm * (smax - smin) + vmin
+    sizes = sizes * (smax - smin) + smin
 
     # Plotting
     ax.imshow(im)
@@ -343,15 +348,6 @@ def set_axis_font(axs, fontproperties):
         _ = plt.setp(props, fontproperties=fontproperties)
 
 
-def array_to_plotly(arr, with_alpha=False):
-    """Convert a matplotlib color array to plotly strings."""
-    if with_alpha is True:
-        return np.array(['rgba(%s, %s, %s, %s)' % (r, g, b, a)
-                         for r, g, b, a in arr])
-    else:
-        return np.array(['rgb(%s, %s, %s)' % (r, g, b) for r, g, b, _ in arr])
-
-
 def layout_to_xy(layout, im):
     """Convert an MNE layout to xy points.
 
@@ -405,7 +401,7 @@ def plot_equation(eq, fontsize=50, outfile=None, padding=0.1, ax=None):
         The axis with your equation.
     """
     # clean equation string
-    eq = eq.strip('$').replace(' ', '')
+    eq = eq.replace('$', '').replace(' ', '')
 
     # set up figure
     if ax is None:
